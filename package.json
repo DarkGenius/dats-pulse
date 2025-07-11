@@ -1,0 +1,18 @@
+{
+  "name": "dats-pulse",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "LOG_LEVEL=DEBUG node index.js",
+    "debug": "LOG_LEVEL=DEBUG DEBUG_MODE=true node index.js",
+    "test-api": "node test-api.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "dotenv": "^17.2.0"
+  }
+}
