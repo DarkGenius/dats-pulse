@@ -242,20 +242,86 @@ class CombatManager {
         
         // Position soldiers between our base and enemy base
         const interceptDistance = Math.min(25, threatDistance * 0.4);
-        const interceptPoint = {
+        const baseInterceptPoint = {
             q: Math.round(anthill.q + normalizedThreat.q * interceptDistance),
             r: Math.round(anthill.r + normalizedThreat.r * interceptDistance)
         };
         
-        // Add some spread to avoid clustering
+        // Use traversability map to find optimal patrol position
+        const traversabilityMap = analysis.traversabilityMap;
+        if (traversabilityMap && traversabilityMap.traversabilityMap) {
+            const optimalPoint = this.findOptimalPatrolPosition(
+                baseInterceptPoint, soldier, anthill, traversabilityMap
+            );
+            if (optimalPoint) {
+                logger.debug(`Soldier ${soldier.id} using traversability-optimized patrol position at (${optimalPoint.q}, ${optimalPoint.r}), cost: ${optimalPoint.cost}`);
+                return optimalPoint;
+            }
+        }
+        
+        // Fallback to original logic with spread
         const spreadRadius = 5;
         const soldierHash = Math.abs(soldier.id.charCodeAt(0)) % 8;
         const spreadAngle = (soldierHash / 8) * Math.PI * 2;
         
         return {
-            q: interceptPoint.q + Math.round(Math.cos(spreadAngle) * spreadRadius),
-            r: interceptPoint.r + Math.round(Math.sin(spreadAngle) * spreadRadius)
+            q: baseInterceptPoint.q + Math.round(Math.cos(spreadAngle) * spreadRadius),
+            r: baseInterceptPoint.r + Math.round(Math.sin(spreadAngle) * spreadRadius)
         };
+    }
+    
+    /**
+     * Finds optimal patrol position considering traversability costs.
+     * @param {Object} basePoint - Base intercept point
+     * @param {Object} soldier - Soldier unit
+     * @param {Object} anthill - Our anthill
+     * @param {Object} traversabilityMap - Traversability analysis
+     * @returns {Object|null} Optimal position or null
+     */
+    findOptimalPatrolPosition(basePoint, soldier, anthill, traversabilityMap) {
+        const candidates = [];
+        const searchRadius = 8;
+        
+        // Generate candidate positions around the base intercept point
+        for (let dq = -searchRadius; dq <= searchRadius; dq++) {
+            for (let dr = -searchRadius; dr <= searchRadius; dr++) {
+                const distance = Math.max(Math.abs(dq), Math.abs(dr), Math.abs(-dq - dr));
+                if (distance > searchRadius) continue;
+                
+                const candidatePoint = {
+                    q: basePoint.q + dq,
+                    r: basePoint.r + dr
+                };
+                
+                const posKey = `${candidatePoint.q},${candidatePoint.r}`;
+                const hexData = traversabilityMap.traversabilityMap.get(posKey);
+                
+                if (hexData && hexData.isWalkable) {
+                    const distanceToBase = this.calculateDistance(candidatePoint, anthill);
+                    const distanceToBasePoint = this.calculateDistance(candidatePoint, basePoint);
+                    
+                    // Score based on low cost, moderate distance from base, close to intercept point
+                    const costScore = Math.max(0.1, 5 / (hexData.cost + 1));
+                    const distanceScore = Math.max(0.1, 1 / (1 + distanceToBasePoint * 0.2));
+                    const baseDistanceScore = distanceToBase >= 10 ? 1.0 : 0.5; // Prefer positions not too close to base
+                    
+                    const totalScore = costScore * distanceScore * baseDistanceScore;
+                    
+                    candidates.push({
+                        q: candidatePoint.q,
+                        r: candidatePoint.r,
+                        cost: hexData.cost,
+                        score: totalScore,
+                        distanceToBase
+                    });
+                }
+            }
+        }
+        
+        // Sort by score and return best candidate
+        candidates.sort((a, b) => b.score - a.score);
+        
+        return candidates.length > 0 ? candidates[0] : null;
     }
     
     /**

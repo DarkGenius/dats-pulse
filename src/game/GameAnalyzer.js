@@ -48,6 +48,7 @@ class GameAnalyzer {
             territory: this.analyzeTerritory(gameState),
             economy: this.analyzeEconomy(gameState),
             threatMap: this.generateThreatMapAnalysis(gameState),
+            traversabilityMap: this.analyzeTraversability(gameState),
             gameState: gameState
         };
 
@@ -730,6 +731,253 @@ class GameAnalyzer {
         targets.sort((a, b) => b.priority - a.priority);
         
         return targets.slice(0, 8); // Return top 8 targets
+    }
+    
+    /**
+     * Analyzes map traversability to identify areas with movement costs.
+     * @param {Object} gameState - Current game state
+     * @returns {Object} Traversability analysis
+     */
+    analyzeTraversability(gameState) {
+        const traversabilityMap = new Map();
+        const explorationTargets = [];
+        const avoidanceZones = [];
+        
+        // If no map data, return empty analysis
+        if (!gameState.map || !Array.isArray(gameState.map)) {
+            return {
+                traversabilityMap,
+                explorationTargets: [],
+                avoidanceZones: [],
+                recommendedPaths: []
+            };
+        }
+        
+        // Analyze each hex on the map
+        gameState.map.forEach(hex => {
+            if (!hex || hex.q === undefined || hex.r === undefined) return;
+            
+            const position = { q: hex.q, r: hex.r };
+            const cost = hex.cost || 1; // Default cost is 1
+            const posKey = `${hex.q},${hex.r}`;
+            
+            // Categorize based on movement cost
+            let category = 'normal';
+            let priority = 'medium';
+            
+            if (cost <= 1) {
+                category = 'easy'; // Easy to traverse
+                priority = 'high';
+            } else if (cost <= 3) {
+                category = 'moderate'; // Moderate cost
+                priority = 'medium';
+            } else if (cost <= 5) {
+                category = 'difficult'; // High cost
+                priority = 'low';
+            } else {
+                category = 'avoid'; // Very high cost - avoid
+                priority = 'avoid';
+                avoidanceZones.push({
+                    position,
+                    cost,
+                    reason: 'high_movement_cost'
+                });
+            }
+            
+            traversabilityMap.set(posKey, {
+                position,
+                cost,
+                category,
+                priority,
+                isWalkable: cost < 10 // Consider impassable if cost >= 10
+            });
+            
+            // Add good exploration targets (low cost areas)
+            if (cost <= 2 && this.isGoodExplorationTarget(position, gameState)) {
+                explorationTargets.push({
+                    position,
+                    cost,
+                    priority: this.calculateExplorationPriority(position, gameState)
+                });
+            }
+        });
+        
+        // Generate recommended paths between key areas
+        const recommendedPaths = this.generateRecommendedPaths(traversabilityMap, gameState);
+        
+        // Sort exploration targets by priority
+        explorationTargets.sort((a, b) => b.priority - a.priority);
+        
+        logger.debug(`Traversability analysis: ${traversabilityMap.size} hexes analyzed, ${explorationTargets.length} exploration targets, ${avoidanceZones.length} avoidance zones`);
+        
+        return {
+            traversabilityMap,
+            explorationTargets: explorationTargets.slice(0, 20), // Top 20 targets
+            avoidanceZones,
+            recommendedPaths
+        };
+    }
+    
+    /**
+     * Determines if a position is a good exploration target.
+     * @param {Object} position - Position to check
+     * @param {Object} gameState - Current game state
+     * @returns {boolean} True if good for exploration
+     */
+    isGoodExplorationTarget(position, gameState) {
+        const anthill = this.findAnthill(gameState);
+        if (!anthill) return true;
+        
+        const distance = this.calculateHexDistance(anthill, position);
+        
+        // Good exploration targets are:
+        // 1. Not too close to base (>5 hexes)
+        // 2. Not too far (< 40 hexes)
+        // 3. Not already explored (no units nearby)
+        return distance > 5 && distance < 40 && !this.isAlreadyExplored(position, gameState);
+    }
+    
+    /**
+     * Checks if an area is already explored (has our units nearby).
+     * @param {Object} position - Position to check
+     * @param {Object} gameState - Current game state  
+     * @returns {boolean} True if already explored
+     */
+    isAlreadyExplored(position, gameState) {
+        const myUnits = (gameState.ants || []).filter(unit => unit.type !== 0);
+        
+        return myUnits.some(unit => {
+            const distance = this.calculateHexDistance(position, unit);
+            return distance <= 3; // Consider explored if unit within 3 hexes
+        });
+    }
+    
+    /**
+     * Calculates exploration priority for a position.
+     * @param {Object} position - Position to evaluate
+     * @param {Object} gameState - Current game state
+     * @returns {number} Priority score
+     */
+    calculateExplorationPriority(position, gameState) {
+        let priority = 10; // Base priority
+        
+        const anthill = this.findAnthill(gameState);
+        if (anthill) {
+            const distance = this.calculateHexDistance(anthill, position);
+            
+            // Moderate distance is best (not too close, not too far)
+            if (distance >= 10 && distance <= 25) {
+                priority += 20;
+            } else if (distance > 25) {
+                priority += Math.max(0, 15 - (distance - 25)); // Decreasing priority for far areas
+            }
+        }
+        
+        // Check if there are resources nearby (makes exploration more valuable)
+        const nearbyResources = (gameState.food || []).filter(resource => {
+            const distance = this.calculateHexDistance(position, resource);
+            return distance <= 5;
+        });
+        priority += nearbyResources.length * 5;
+        
+        // Check threat map interest
+        const posKey = `${position.q},${position.r}`;
+        const threatData = this.threatMap.get(posKey);
+        if (threatData && threatData.interest > 5) {
+            priority += Math.min(20, threatData.interest); // Add threat map interest
+        }
+        
+        return priority;
+    }
+    
+    /**
+     * Generates recommended paths between key areas.
+     * @param {Map} traversabilityMap - Traversability data
+     * @param {Object} gameState - Current game state
+     * @returns {Array} Array of recommended path segments
+     */
+    generateRecommendedPaths(traversabilityMap, gameState) {
+        const paths = [];
+        const anthill = this.findAnthill(gameState);
+        
+        if (!anthill || traversabilityMap.size === 0) return paths;
+        
+        // Find key strategic positions
+        const resources = gameState.food || [];
+        const keyPositions = [anthill, ...resources.slice(0, 5)]; // Anthill + top 5 resources
+        
+        // For each key position, find the best route from anthill
+        keyPositions.slice(1).forEach(target => {
+            const pathInfo = this.findOptimalPath(anthill, target, traversabilityMap);
+            if (pathInfo) {
+                paths.push({
+                    from: anthill,
+                    to: target,
+                    averageCost: pathInfo.averageCost,
+                    category: pathInfo.category,
+                    recommendation: pathInfo.recommendation
+                });
+            }
+        });
+        
+        return paths;
+    }
+    
+    /**
+     * Finds optimal path between two points considering traversability.
+     * @param {Object} start - Start position
+     * @param {Object} end - End position  
+     * @param {Map} traversabilityMap - Traversability data
+     * @returns {Object|null} Path information
+     */
+    findOptimalPath(start, end, traversabilityMap) {
+        // Simple implementation: check direct path costs
+        const distance = this.calculateHexDistance(start, end);
+        if (distance === 0) return null;
+        
+        let totalCost = 0;
+        let validHexes = 0;
+        
+        // Sample path points (simplified direct line)
+        for (let i = 0; i <= Math.min(distance, 10); i++) {
+            const ratio = i / Math.max(distance, 1);
+            const sampleQ = Math.round(start.q + (end.q - start.q) * ratio);
+            const sampleR = Math.round(start.r + (end.r - start.r) * ratio);
+            
+            const posKey = `${sampleQ},${sampleR}`;
+            const hexData = traversabilityMap.get(posKey);
+            
+            if (hexData) {
+                totalCost += hexData.cost;
+                validHexes++;
+            }
+        }
+        
+        if (validHexes === 0) return null;
+        
+        const averageCost = totalCost / validHexes;
+        let category, recommendation;
+        
+        if (averageCost <= 1.5) {
+            category = 'excellent';
+            recommendation = 'Optimal route - low movement cost';
+        } else if (averageCost <= 3) {
+            category = 'good';
+            recommendation = 'Good route - moderate cost';
+        } else if (averageCost <= 5) {
+            category = 'challenging';
+            recommendation = 'Difficult route - consider alternatives';
+        } else {
+            category = 'avoid';
+            recommendation = 'Avoid - very high movement cost';
+        }
+        
+        return {
+            averageCost,
+            category,
+            recommendation,
+            distance
+        };
     }
 }
 

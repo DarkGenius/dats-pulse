@@ -2093,10 +2093,34 @@ class UnitManager {
         const gameState = analysis.gameState;
         const turn = gameState.turnNo || 0;
         const threatMap = analysis.threatMap;
+        const traversabilityMap = analysis.traversabilityMap;
         
-        // PRIORITY 1: Check for threat map based targets
+        // PRIORITY 1: Use traversability-optimized exploration targets
+        if (traversabilityMap && traversabilityMap.explorationTargets.length > 0) {
+            const bestTarget = this.selectBestTraversabilityTarget(unit, traversabilityMap.explorationTargets);
+            if (bestTarget) {
+                const path = this.findPath(unit, bestTarget.position, analysis);
+                if (path && path.length > 0) {
+                    logger.info(`🗺️ Scout ${unit.id} exploring low-cost area at (${bestTarget.position.q}, ${bestTarget.position.r}) - Cost: ${bestTarget.cost}, Priority: ${bestTarget.priority.toFixed(1)}`);
+                    return {
+                        unit_id: unit.id,
+                        path: path,
+                        assignment: {
+                            type: 'systematic_exploration',
+                            target: bestTarget.position,
+                            priority: 'high',
+                            reason: 'optimal_traversability',
+                            traversabilityBased: true,
+                            movementCost: bestTarget.cost
+                        }
+                    };
+                }
+            }
+        }
+        
+        // PRIORITY 2: Check for threat map based targets
         if (threatMap && threatMap.recommendedScoutTargets.length > 0) {
-            const threatBasedTarget = this.selectBestThreatMapTarget(unit, threatMap.recommendedScoutTargets);
+            const threatBasedTarget = this.selectBestThreatMapTarget(unit, threatMap.recommendedScoutTargets, traversabilityMap);
             if (threatBasedTarget) {
                 const path = this.findPath(unit, threatBasedTarget, analysis);
                 if (path && path.length > 0) {
@@ -2174,16 +2198,28 @@ class UnitManager {
      * @param {Array} threatTargets - Цели от карты угроз
      * @returns {Object|null} Лучшая цель или null
      */
-    selectBestThreatMapTarget(unit, threatTargets) {
+    selectBestThreatMapTarget(unit, threatTargets, traversabilityMap = null) {
         if (threatTargets.length === 0) return null;
         
-        // Score targets based on priority and distance
+        // Score targets based on priority, distance, and traversability
         const scoredTargets = threatTargets.map(target => {
             const distance = this.calculateDistance(unit, target);
             const distanceScore = Math.max(0.1, 1 / (1 + distance * 0.1));
-            const score = target.priority * distanceScore;
+            let traversabilityScore = 1.0;
             
-            return { ...target, distance, score };
+            // Factor in traversability if available
+            if (traversabilityMap && traversabilityMap.traversabilityMap) {
+                const posKey = `${target.q},${target.r}`;
+                const hexData = traversabilityMap.traversabilityMap.get(posKey);
+                if (hexData) {
+                    // Lower cost = higher score
+                    traversabilityScore = Math.max(0.1, 3 / (hexData.cost + 1));
+                }
+            }
+            
+            const score = target.priority * distanceScore * traversabilityScore;
+            
+            return { ...target, distance, score, traversabilityScore };
         });
         
         // Sort by score (highest first)
@@ -2198,6 +2234,52 @@ class UnitManager {
         }
         
         return null;
+    }
+    
+    /**
+     * Selects best exploration target from traversability analysis.
+     * @param {Object} unit - Scout unit
+     * @param {Array} explorationTargets - Available exploration targets
+     * @returns {Object|null} Best target or null
+     */
+    selectBestTraversabilityTarget(unit, explorationTargets) {
+        if (explorationTargets.length === 0) return null;
+        
+        // Score targets based on priority, distance, and movement cost
+        const scoredTargets = explorationTargets.map(target => {
+            const distance = this.calculateDistance(unit, target.position);
+            const distanceScore = Math.max(0.1, 1 / (1 + distance * 0.05));
+            const costScore = Math.max(0.1, 3 / (target.cost + 1)); // Lower cost = higher score
+            const priorityScore = target.priority;
+            
+            const totalScore = priorityScore * distanceScore * costScore;
+            
+            return { 
+                ...target, 
+                distance, 
+                totalScore,
+                distanceScore,
+                costScore,
+                priorityScore
+            };
+        });
+        
+        // Sort by total score (highest first)
+        scoredTargets.sort((a, b) => b.totalScore - a.totalScore);
+        
+        // Return best target within reasonable distance and low cost
+        const maxDistance = 30;
+        const maxCost = 4; // Avoid high-cost areas
+        
+        for (const target of scoredTargets) {
+            if (target.distance <= maxDistance && target.cost <= maxCost) {
+                logger.debug(`Selected traversability target: cost=${target.cost}, distance=${target.distance}, priority=${target.priority}, score=${target.totalScore.toFixed(2)}`);
+                return target;
+            }
+        }
+        
+        // If no good targets, take the best available even if suboptimal
+        return scoredTargets.length > 0 ? scoredTargets[0] : null;
     }
     
     /**
