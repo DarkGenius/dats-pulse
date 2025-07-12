@@ -4,6 +4,8 @@ const {
     UNIT_TYPE_NAMES, 
     UNIT_STATS 
 } = require('../constants/GameConstants');
+const AStarPathfinder = require('./AStarPathfinder');
+const PathfindingValidator = require('./PathfindingValidator');
 
 /**
  * Управляет боевыми операциями, формированиями и тактикой.
@@ -35,6 +37,8 @@ class CombatManager {
         
         this.combatHistory = [];
         this.activeEngagements = new Map();
+        this.pathfinder = new AStarPathfinder();
+        this.pathValidator = new PathfindingValidator();
     }
     
     /**
@@ -71,7 +75,7 @@ class CombatManager {
                 soldiers.forEach(soldier => {
                     if (anthillThreats.length > 0) {
                         const target = anthillThreats[0];
-                        const path = this.calculateDirectPath(soldier, target);
+                        const path = this.findPath(soldier, target, analysis);
                         
                         if (path && path.length > 0) {
                             moves.push({
@@ -107,7 +111,7 @@ class CombatManager {
             });
             
             if (nearestEnemy && minDistance <= 20) { // Attack enemies within 20 hexes
-                const path = this.calculateDirectPath(soldier, nearestEnemy);
+                const path = this.findPath(soldier, nearestEnemy, analysis);
                 
                 if (path && path.length > 0) {
                     moves.push({
@@ -125,6 +129,34 @@ class CombatManager {
         });
         
         return moves;
+    }
+    
+    /**
+     * Находит путь от юнита к цели используя A* алгоритм.
+     * @param {Object} unit - Юнит
+     * @param {Object} target - Целевая позиция
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array|null} Массив точек пути или null
+     */
+    findPath(unit, target, analysis) {
+        if (!unit || !target) {
+            return null;
+        }
+
+        // Create walkability check function
+        const isWalkable = (pos) => {
+            return this.pathValidator.isValidPosition(pos, analysis.gameState);
+        };
+
+        // Use A* pathfinding
+        let path = this.pathfinder.findPath(unit, target, isWalkable, 50);
+        
+        // If direct path fails, try alternative paths
+        if (!path || path.length === 0) {
+            path = this.pathfinder.findAlternativePath(unit, target, isWalkable, 50);
+        }
+
+        return path;
     }
 
     /**

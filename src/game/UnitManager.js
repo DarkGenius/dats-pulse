@@ -7,6 +7,7 @@ const {
     UNIT_STATS 
 } = require('../constants/GameConstants');
 const PathfindingValidator = require('./PathfindingValidator');
+const AStarPathfinder = require('./AStarPathfinder');
 
 /**
  * Управляет поведением и движением юнитов.
@@ -26,6 +27,7 @@ class UnitManager {
         this.movementQueue = [];
         this.unitAssignments = new Map();
         this.pathValidator = new PathfindingValidator();
+        this.pathfinder = new AStarPathfinder();
     }
 
     /**
@@ -739,33 +741,47 @@ class UnitManager {
             return null;
         }
 
-        // Сначала пытаемся построить прямой путь
+        // CRITICAL FIX: Use A* pathfinding instead of simple direct path
+        // Create walkability check function
+        const isWalkable = (pos) => {
+            return this.pathValidator.isValidPosition(pos, analysis.gameState);
+        };
+
+        // Calculate maximum search distance based on unit speed and remaining moves
+        const unitSpeed = this.getUnitSpeed(unit.type);
+        const maxSearchDistance = Math.min(100, unitSpeed * 10);
+
+        // Try A* pathfinding first
+        let path = this.pathfinder.findPath(unit, target, isWalkable, maxSearchDistance);
+        
+        // If direct path fails, try alternative paths
+        if (!path || path.length === 0) {
+            logger.debug(`A* direct path failed for unit ${unit.id} to (${target.q}, ${target.r}), trying alternatives`);
+            path = this.pathfinder.findAlternativePath(unit, target, isWalkable, maxSearchDistance);
+        }
+
+        if (path && path.length > 0) {
+            // Additional safety check
+            const safetyCheckedPath = this.verifySafety(path, analysis);
+            if (safetyCheckedPath && safetyCheckedPath.length > 0) {
+                logger.debug(`A* path found for unit ${unit.id}: ${path.length} steps to (${target.q}, ${target.r})`);
+                return safetyCheckedPath;
+            }
+        }
+
+        // Fallback to old method if A* fails (for backward compatibility)
+        logger.debug(`A* pathfinding failed, falling back to direct path for unit ${unit.id}`);
         const directPath = this.calculateDirectPath(unit, target);
         
-        if (directPath.length === 0) {
-            return null;
+        if (directPath.length > 0) {
+            const validation = this.pathValidator.validateAndCorrectPath(unit, directPath, analysis.gameState);
+            if (validation.validPath.length > 0) {
+                return this.verifySafety(validation.validPath, analysis);
+            }
         }
 
-        // Проверяем путь на соответствие игровым правилам
-        const validation = this.pathValidator.validateAndCorrectPath(unit, directPath, analysis.gameState);
-        
-        if (validation.validPath.length > 0) {
-            // Дополнительно проверяем на безопасность
-            const safetyCheckedPath = this.verifySafety(validation.validPath, analysis);
-            return safetyCheckedPath;
-        }
-
-        // Если прямой путь заблокирован, пытаемся найти альтернативный
-        logger.debug(`Direct path blocked for unit ${unit.id}: ${validation.reason}`);
-        const alternativePath = this.pathValidator.findAlternativePath(unit, target, analysis.gameState);
-        
-        if (alternativePath && alternativePath.length > 0) {
-            const safetyCheckedPath = this.verifySafety(alternativePath, analysis);
-            return safetyCheckedPath;
-        }
-
-        // Не удалось найти путь
-        logger.debug(`No valid path found for unit ${unit.id} to target ${JSON.stringify(target)}`);
+        // No path found
+        logger.debug(`No valid path found for unit ${unit.id} to target (${target.q}, ${target.r})`);
         return null;
     }
 
