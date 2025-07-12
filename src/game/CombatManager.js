@@ -145,7 +145,7 @@ class CombatManager {
 
         // Create walkability check function
         const isWalkable = (pos) => {
-            return this.pathValidator.isValidPosition(pos, analysis.gameState);
+            return this.pathValidator.validatePosition(pos, analysis.gameState);
         };
 
         // Use A* pathfinding

@@ -75,7 +75,8 @@ class UnitManager {
             this.canCollectResources(unit) && 
             this.hasAvailableResources(analysis)) {
             logger.debug(`Unit ${unit.id} waiting for resource assignment from central manager`);
-            return this.defaultBehavior(unit, analysis);
+            // Don't patrol - just stay still or return to base
+            return null;
         }
         
         const existingAssignment = this.unitAssignments.get(unit.id);
@@ -744,7 +745,7 @@ class UnitManager {
         // CRITICAL FIX: Use A* pathfinding instead of simple direct path
         // Create walkability check function
         const isWalkable = (pos) => {
-            return this.pathValidator.isValidPosition(pos, analysis.gameState);
+            return this.pathValidator.validatePosition(pos, analysis.gameState);
         };
 
         // Calculate maximum search distance based on unit speed and remaining moves

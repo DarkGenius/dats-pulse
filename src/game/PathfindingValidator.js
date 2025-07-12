@@ -243,6 +243,33 @@ class PathfindingValidator {
             default: return 'unknown';
         }
     }
+
+    /**
+     * Validates if a position is walkable (not blocked by units)
+     * @param {Object} position - Position to check {q, r}
+     * @param {Object} gameState - Game state
+     * @returns {boolean} true if position is walkable
+     */
+    validatePosition(position, gameState) {
+        if (!position || position.q === undefined || position.r === undefined) {
+            return false;
+        }
+
+        // Build occupied positions map (we use dummy unit for checking)
+        const dummyUnit = { id: -1, type: 1 }; // Dummy unit to check general walkability
+        const occupiedPositions = this.buildOccupiedPositionsMap(gameState, dummyUnit);
+        
+        // Check if position is occupied by enemy (always blocks)
+        const key = `${position.q},${position.r}`;
+        const occupancy = occupiedPositions.get(key);
+        
+        if (occupancy && occupancy.type === 'enemy') {
+            return false; // Enemy units always block
+        }
+        
+        // Position is either free or has a friendly unit (which may be passable)
+        return true;
+    }
 }
 
 module.exports = PathfindingValidator;
