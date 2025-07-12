@@ -769,15 +769,18 @@ class UnitManager {
 
         // Calculate maximum search distance based on unit speed and remaining moves
         const unitSpeed = this.getUnitSpeed(unit.type);
-        const maxSearchDistance = Math.min(100, unitSpeed * 10);
+        // Increase search distance for recovery mode or long-range pathfinding
+        const distance = this.calculateDistance(unit, target);
+        const baseSearchDistance = Math.min(200, unitSpeed * 15); // Increased base distance
+        const maxSearchDistance = Math.max(baseSearchDistance, distance + 10); // Ensure we can reach the target
 
-        // Try A* pathfinding first
+        // Try A* pathfinding
         let path = this.pathfinder.findPath(unit, target, isWalkable, maxSearchDistance);
         
-        // If direct path fails, try alternative paths
+        // If direct path fails, try using pathValidator alternative path
         if (!path || path.length === 0) {
-            logger.debug(`A* direct path failed for unit ${unit.id} to (${target.q}, ${target.r}), trying alternatives`);
-            path = this.pathfinder.findAlternativePath(unit, target, isWalkable, maxSearchDistance);
+            logger.debug(`A* direct path failed for unit ${unit.id} to (${target.q}, ${target.r}), trying PathValidator alternative`);
+            path = this.pathValidator.findAlternativePath(unit, target, analysis.gameState);
         }
 
         if (path && path.length > 0) {

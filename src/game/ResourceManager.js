@@ -951,14 +951,39 @@ class ResourceManager {
         // Soldiers (type 2) should focus on combat
         const allNonSoldiers = analysis.units.myUnits.filter(unit => unit.type !== this.unitTypes.SOLDIER);
         const availableUnits = allNonSoldiers.filter(unit => {
-            const hasAssignment = !!resourceAssignmentManager.getUnitAssignment(unit.id);
+            const assignment = resourceAssignmentManager.getUnitAssignment(unit.id);
             const inCombat = this.isUnitInCombat(unit, analysis);
             
-            if (hasAssignment || inCombat) {
-                logger.debug(`Unit ${unit.id} (${this.unitTypeNames[unit.type]}) unavailable: assignment=${hasAssignment}, inCombat=${inCombat}`);
+            // Check if assignment is still valid (target resource exists and is reachable)
+            let hasValidAssignment = false;
+            if (assignment) {
+                const target = assignment.target;
+                const resourceExists = analysis.resources.visible.some(r => 
+                    r.q === target.q && r.r === target.r && r.type === target.type
+                );
+                
+                if (!resourceExists) {
+                    logger.warn(`Unit ${unit.id} has assignment to non-existent resource at (${target.q}, ${target.r}), releasing assignment`);
+                    resourceAssignmentManager.releaseUnitAssignment(unit.id);
+                    hasValidAssignment = false;
+                } else {
+                    // Check if target is reachable (simple distance check)
+                    const distance = this.calculateDistance(unit, target);
+                    if (distance > 200) { // Unreasonably far
+                        logger.warn(`Unit ${unit.id} has assignment to unreachably distant resource at (${target.q}, ${target.r}), distance ${distance}, releasing assignment`);
+                        resourceAssignmentManager.releaseUnitAssignment(unit.id);
+                        hasValidAssignment = false;
+                    } else {
+                        hasValidAssignment = true;
+                    }
+                }
             }
             
-            return !hasAssignment && !inCombat;
+            if (hasValidAssignment || inCombat) {
+                logger.debug(`Unit ${unit.id} (${this.unitTypeNames[unit.type]}) unavailable: validAssignment=${hasValidAssignment}, inCombat=${inCombat}`);
+            }
+            
+            return !hasValidAssignment && !inCombat;
         });
         
         logger.debug(`Available units for resource collection: ${availableUnits.length}/${allNonSoldiers.length} (excluded ${analysis.units.myUnits.length - allNonSoldiers.length} soldiers)`);
