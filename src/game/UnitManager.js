@@ -68,8 +68,10 @@ class UnitManager {
         }
         
         // Если юнит может собирать ресурсы, но не имеет назначения,
-        // он ждет назначения от ResourceManager
-        if (this.canCollectResources(unit) && this.hasAvailableResources(analysis)) {
+        // он ждет назначения от ResourceManager (но не солдаты!)
+        if (unit.type !== this.unitTypes.SOLDIER && 
+            this.canCollectResources(unit) && 
+            this.hasAvailableResources(analysis)) {
             logger.debug(`Unit ${unit.id} waiting for resource assignment from central manager`);
             return this.defaultBehavior(unit, analysis);
         }
@@ -236,9 +238,14 @@ class UnitManager {
             tasks.push('find_enemy_anthill', 'aggressive_exploration', 'exploration', 'resource_scouting');
             // Централизованная система управляет всеми ресурсными задачами
         } else if (unitTypeName === 'soldier') {
-            // Soldiers focus on combat
-            tasks.push('hunt_enemies', 'combat', 'aggressive_exploration', 'convoy_protection', 'territory_defense');
-            // Централизованная система управляет всеми ресурсными задачами
+            // CRITICAL FIX: Soldiers must prioritize combat over everything else
+            // Check for any enemies on the map
+            if (analysis.units.enemyUnits && analysis.units.enemyUnits.length > 0) {
+                tasks.push('hunt_enemies'); // Primary task - hunt any visible enemies
+                return tasks; // Return immediately - soldiers should focus on combat
+            }
+            // If no enemies visible, patrol and defend
+            tasks.push('territory_defense', 'convoy_protection', 'aggressive_exploration');
         } else if (unitTypeName === 'worker') {
             // Workers focus on support tasks, central manager handles resources
             tasks.push('assist_raid', 'construction');
@@ -610,16 +617,35 @@ class UnitManager {
      * @returns {Object|null} Команда движения к точке патрулирования или null
      */
     defendTerritory(unit, analysis) {
-        const territoryThreats = analysis.threats.nearbyThreats;
-        if (territoryThreats.length === 0) {
-            return null;
-        }
-
-        const patrolPoints = this.generatePatrolPoints(analysis);
-        const nearestPatrolPoint = this.findNearestPosition(unit, patrolPoints);
+        // CRITICAL FIX: Soldiers should patrol even without visible threats
+        const anthill = analysis.units.anthill;
+        if (!anthill) return null;
         
-        if (nearestPatrolPoint) {
-            const path = this.findPath(unit, nearestPatrolPoint, analysis);
+        // Generate patrol points around the anthill
+        const patrolRadius = 10;
+        const patrolPoints = [];
+        
+        // Create a ring of patrol points around the anthill
+        for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
+            const q = Math.round(anthill.q + Math.cos(angle) * patrolRadius);
+            const r = Math.round(anthill.r + Math.sin(angle) * patrolRadius);
+            patrolPoints.push({ q, r });
+        }
+        
+        // Find the farthest patrol point from current position to ensure movement
+        let farthestPoint = null;
+        let maxDistance = 0;
+        
+        patrolPoints.forEach(point => {
+            const distance = this.calculateDistance(unit, point);
+            if (distance > maxDistance) {
+                maxDistance = distance;
+                farthestPoint = point;
+            }
+        });
+        
+        if (farthestPoint) {
+            const path = this.findPath(unit, farthestPoint, analysis);
             
             if (path && path.length > 0) {
                 return {
@@ -627,7 +653,7 @@ class UnitManager {
                     path: path,
                     assignment: {
                         type: 'territory_defense',
-                        target: nearestPatrolPoint,
+                        target: farthestPoint,
                         priority: 'medium'
                     }
                 };
