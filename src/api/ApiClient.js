@@ -47,6 +47,10 @@ class ApiClient {
     return await this.makeRequest("GET", "/logs");
   }
 
+  async getRounds() {
+    return await this.makeRequest("GET", "/rounds");
+  }
+
   async makeRequest(method, endpoint, data = null) {
     return new Promise((resolve, reject) => {
       const url = new URL(this.baseUrl + endpoint);

@@ -8,7 +8,14 @@ const {
     COLLECTION_EFFICIENCY 
 } = require('../constants/GameConstants');
 
+/**
+ * Управляет сбором ресурсов, логистикой и оптимизацией ресурсных потоков.
+ * Определяет приоритеты ресурсов, назначает юнитов, планирует маршруты и анализирует эффективность.
+ */
 class ResourceManager {
+    /**
+     * Инициализирует менеджер ресурсов с константами игры и системами отслеживания назначений.
+     */
     constructor() {
         this.resourceValues = FOOD_CALORIES;
         this.collectionEfficiency = COLLECTION_EFFICIENCY;
@@ -21,6 +28,12 @@ class ResourceManager {
         this.collectionHistory = [];
     }
 
+    /**
+     * Планирует сбор ресурсов на основе анализа игры и стратегии.
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия игры
+     * @returns {Object} Объект с массивом действий по сбору ресурсов
+     */
     planResourceCollection(analysis, strategy) {
         const actions = [];
         const availableUnits = this.getAvailableUnits(analysis);
@@ -48,6 +61,11 @@ class ResourceManager {
         return { actions };
     }
 
+    /**
+     * Получает список доступных юнитов для назначения на сбор ресурсов.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив доступных юнитов
+     */
     getAvailableUnits(analysis) {
         return analysis.units.myUnits.filter(unit => 
             !this.isUnitAssigned(unit.id) && 
@@ -55,6 +73,12 @@ class ResourceManager {
         );
     }
 
+    /**
+     * Приоритизирует ресурсы на основе ценности, расстояния, эффективности и безопасности.
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия игры
+     * @returns {Array} Отсортированный массив ресурсов с приоритетами
+     */
     prioritizeResources(analysis, strategy) {
         const resources = analysis.resources.visible;
         const resourcePriorities = [];
@@ -77,6 +101,13 @@ class ResourceManager {
         });
     }
 
+    /**
+     * Вычисляет приоритет конкретного ресурса на основе типа, фазы игры и безопасности.
+     * @param {Object} resource - Ресурс для оценки
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия игры
+     * @returns {number} Числовой приоритет ресурса
+     */
     calculateResourcePriority(resource, analysis, strategy) {
         let priority = 1.0;
         const phase = strategy.phase;
@@ -119,6 +150,12 @@ class ResourceManager {
         return priority;
     }
 
+    /**
+     * Оценивает безопасность сбора ресурса на основе близости угроз и союзников.
+     * @param {Object} resource - Ресурс для оценки
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {number} Коэффициент безопасности от 0.3 до 2.0
+     */
     calculateResourceSafety(resource, analysis) {
         const threats = analysis.threats.threats;
         const nearbyThreats = threats.filter(threat => 
@@ -143,6 +180,12 @@ class ResourceManager {
         return Math.min(safety, 2.0);
     }
 
+    /**
+     * Находит кратчайшее расстояние от ресурса до любого из моих юнитов.
+     * @param {Object} resource - Ресурс
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {number} Минимальное расстояние или Infinity если нет юнитов
+     */
     calculateNearestDistance(resource, analysis) {
         const myUnits = analysis.units.myUnits;
         if (myUnits.length === 0) {
@@ -156,6 +199,12 @@ class ResourceManager {
         return Math.min(...distances);
     }
 
+    /**
+     * Вычисляет эффективность сбора ресурса доступными юнитами.
+     * @param {Object} resource - Ресурс
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {number} Максимальная эффективность среди доступных юнитов
+     */
     calculateCollectionEfficiency(resource, analysis) {
         const availableUnits = this.getAvailableUnits(analysis);
         const unitTypes = availableUnits.map(unit => unit.type);
@@ -167,6 +216,14 @@ class ResourceManager {
         return efficiencies.length > 0 ? Math.max(...efficiencies) : 0.5;
     }
 
+    /**
+     * Назначает оптимальных юнитов для сбора конкретного ресурса.
+     * @param {Object} resourceInfo - Информация о ресурсе с приоритетом
+     * @param {Array} availableUnits - Доступные для назначения юниты
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия игры
+     * @returns {Object|null} Назначение ресурса или null
+     */
     assignUnitsToResource(resourceInfo, availableUnits, analysis, strategy) {
         const resource = resourceInfo.resource;
         const bestUnits = this.selectBestUnitsForResource(resource, availableUnits, analysis);
@@ -190,6 +247,13 @@ class ResourceManager {
         return assignment;
     }
 
+    /**
+     * Выбирает лучших юнитов для сбора конкретного ресурса.
+     * @param {Object} resource - Ресурс
+     * @param {Array} availableUnits - Доступные юниты
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив выбранных юнитов
+     */
     selectBestUnitsForResource(resource, availableUnits, analysis) {
         const unitsWithScore = availableUnits.map(unit => ({
             unit,
@@ -212,6 +276,13 @@ class ResourceManager {
         return unitsWithScore.slice(0, unitsNeeded).map(item => item.unit);
     }
 
+    /**
+     * Вычисляет оценку пригодности юнита для сбора конкретного ресурса.
+     * @param {Object} unit - Юнит
+     * @param {Object} resource - Ресурс
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {number} Оценка пригодности юнита
+     */
     calculateUnitResourceScore(unit, resource, analysis) {
         let score = 0;
         
@@ -231,6 +302,11 @@ class ResourceManager {
         return score;
     }
 
+    /**
+     * Получает грузоподъёмность юнита по его типу.
+     * @param {string} unitType - Тип юнита
+     * @returns {number} Грузоподъёмность юнита
+     */
     getUnitCargoCapacity(unitType) {
         const capacities = {
             worker: 8,
@@ -240,6 +316,13 @@ class ResourceManager {
         return capacities[unitType] || 2;
     }
 
+    /**
+     * Оценивает безопасность маршрута юнита к ресурсу.
+     * @param {Object} unit - Юнит
+     * @param {Object} resource - Целевой ресурс
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {number} Коэффициент безопасности маршрута
+     */
     calculateUnitSafety(unit, resource, analysis) {
         const threats = analysis.threats.threats;
         const path = this.estimatePath(unit, resource);
@@ -259,6 +342,12 @@ class ResourceManager {
         return safety;
     }
 
+    /**
+     * Оценивает прямой путь от юнита к ресурсу для анализа безопасности.
+     * @param {Object} unit - Исходный юнит
+     * @param {Object} resource - Целевой ресурс
+     * @returns {Array} Массив точек прямого пути
+     */
     estimatePath(unit, resource) {
         const path = [];
         const steps = Math.max(Math.abs(unit.x - resource.x), Math.abs(unit.y - resource.y));
@@ -273,6 +362,13 @@ class ResourceManager {
         return path;
     }
 
+    /**
+     * Определяет стратегию сбора для группы юнитов и ресурса.
+     * @param {Object} resource - Целевой ресурс
+     * @param {Array} units - Назначенные юниты
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object} Объект со стратегией сбора
+     */
     determineCollectionStrategy(resource, units, analysis) {
         const strategy = {
             formation: 'standard',
@@ -303,6 +399,12 @@ class ResourceManager {
         return strategy;
     }
 
+    /**
+     * Рассчитывает ожидаемую доходность от сбора ресурса.
+     * @param {Object} resource - Ресурс
+     * @param {Array} units - Юниты, назначенные на сбор
+     * @returns {number} Ожидаемая доходность
+     */
     calculateEstimatedYield(resource, units) {
         const baseYield = this.resourceValues[resource.type] || 0;
         const totalCapacity = units.reduce((sum, unit) => 
@@ -316,6 +418,12 @@ class ResourceManager {
         return Math.min(baseYield, totalCapacity * efficiency);
     }
 
+    /**
+     * Планирует логистические операции: возвращение, конвои, оптимизацию потоков.
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия игры
+     * @returns {Array} Массив логистических действий
+     */
     planLogistics(analysis, strategy) {
         const actions = [];
         
@@ -331,6 +439,11 @@ class ResourceManager {
         return actions;
     }
 
+    /**
+     * Планирует возвращение юнитов с ресурсами в муравейник.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив действий по возвращению
+     */
     planReturnJourneys(analysis) {
         const actions = [];
         const myUnits = analysis.units.myUnits;
@@ -359,6 +472,12 @@ class ResourceManager {
         return actions;
     }
 
+    /**
+     * Планирует формирование конвоев для безопасного сбора дальних ресурсов.
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия игры
+     * @returns {Array} Массив действий по формированию конвоев
+     */
     planConvoyFormation(analysis, strategy) {
         const actions = [];
         
@@ -383,6 +502,11 @@ class ResourceManager {
         return actions;
     }
 
+    /**
+     * Оптимизирует потоки ресурсов, устраняя узкие места и перегрузки.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив действий по оптимизации
+     */
     optimizeResourceFlow(analysis) {
         const actions = [];
         
@@ -404,6 +528,11 @@ class ResourceManager {
         return actions;
     }
 
+    /**
+     * Анализирует потоки ресурсов и определяет узкие места в логистике.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object} Объект с массивом узких мест
+     */
     analyzeResourceFlow(analysis) {
         const myUnits = analysis.units.myUnits;
         const anthill = analysis.units.anthill;
@@ -443,6 +572,11 @@ class ResourceManager {
         return { bottlenecks };
     }
 
+    /**
+     * Определяет кластеры ресурсов для анализа пропускной способности.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив кластеров с центрами и пропускной способностью
+     */
     identifyResourceClusters(analysis) {
         const resources = analysis.resources.visible;
         const clusters = [];
@@ -482,6 +616,12 @@ class ResourceManager {
         return clusters;
     }
 
+    /**
+     * Предлагает решение для устранения узкого места в логистике.
+     * @param {Object} bottleneck - Описание узкого места
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object} Объект с рекомендациями по решению
+     */
     suggestBottleneckSolution(bottleneck, analysis) {
         if (bottleneck.type === 'anthill_congestion') {
             return {
@@ -503,6 +643,10 @@ class ResourceManager {
         };
     }
 
+    /**
+     * Обновляет назначения ресурсов, удаляя устаревшие и недоступные.
+     * @param {Object} analysis - Анализ состояния игры
+     */
     updateResourceAssignments(analysis) {
         const currentTime = Date.now();
         const assignmentTimeout = 60000;
@@ -529,12 +673,23 @@ class ResourceManager {
         });
     }
 
+    /**
+     * Проверяет, доступен ли ещё ресурс на карте.
+     * @param {string} resourceId - Идентификатор ресурса
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {boolean} true, если ресурс доступен
+     */
     isResourceAvailable(resourceId, analysis) {
         return analysis.resources.visible.some(resource => 
             resource.id === resourceId
         );
     }
 
+    /**
+     * Проверяет, назначен ли юнит на сбор ресурсов.
+     * @param {string} unitId - Идентификатор юнита
+     * @returns {boolean} true, если юнит назначен
+     */
     isUnitAssigned(unitId) {
         for (const assignment of this.resourceAssignments.values()) {
             if (assignment.units.some(unit => unit.id === unitId)) {
@@ -544,6 +699,12 @@ class ResourceManager {
         return false;
     }
 
+    /**
+     * Проверяет, участвует ли юнит в бою (находится ли рядом с врагом).
+     * @param {Object} unit - Юнит
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {boolean} true, если юнит в бою
+     */
     isUnitInCombat(unit, analysis) {
         const threats = analysis.threats.threats;
         return threats.some(threat => 
@@ -551,17 +712,36 @@ class ResourceManager {
         );
     }
 
+    /**
+     * Отмечает юнит как назначенный на ресурс.
+     * @param {string} unitId - Идентификатор юнита
+     * @param {Object} assignment - Назначение ресурса
+     */
     markUnitAsAssigned(unitId, assignment) {
         assignment.timestamp = Date.now();
     }
 
+    /**
+     * Снимает отметку о назначении юнита. Пока заглушка.
+     * @param {string} unitId - Идентификатор юнита
+     */
     unmarkUnitAsAssigned(unitId) {
     }
 
+    /**
+     * Проверяет, есть ли у юнита ресурсы в грузовом отсеке.
+     * @param {Object} unit - Юнит
+     * @returns {boolean} true, если у юнита есть ресурсы
+     */
     unitHasResources(unit) {
         return unit.cargo && unit.cargo > 0;
     }
 
+    /**
+     * Рассчитывает оценочную стоимость ресурсов, которые несёт юнит.
+     * @param {Object} unit - Юнит с грузом
+     * @returns {number} Оценочная стоимость груза
+     */
     calculateUnitResourceValue(unit) {
         if (!unit.cargo || unit.cargo === 0) {
             return 0;
@@ -570,6 +750,12 @@ class ResourceManager {
         return unit.cargo * 15;
     }
 
+    /**
+     * Вычисляет расстояние между двумя позициями в гексагональной системе координат.
+     * @param {Object} pos1 - Первая позиция с координатами x, y
+     * @param {Object} pos2 - Вторая позиция с координатами x, y
+     * @returns {number} Расстояние в гексагональных клетках или Infinity при ошибке
+     */
     calculateDistance(pos1, pos2) {
         if (!pos1 || !pos2) return Infinity;
         

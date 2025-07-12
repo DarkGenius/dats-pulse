@@ -1,6 +1,13 @@
 const logger = require('../utils/Logger');
 
+/**
+ * Управляет стратегией игры на основе трехфазной модели.
+ * Определяет приоритеты, производство юнитов, ресурсную стратегию и боевые действия.
+ */
 class StrategyManager {
+    /**
+     * Инициализирует менеджер стратегии с оптимальными пропорциями юнитов и экономическими целями.
+     */
     constructor() {
         this.phases = {
             EARLY: 'early',
@@ -33,6 +40,12 @@ class StrategyManager {
         };
     }
 
+    /**
+     * Определяет общую стратегию на основе анализа игры.
+     * @param {Object} analysis - Результат анализа состояния игры
+     * @param {number} turnNumber - Номер текущего хода
+     * @returns {Object} Комплексная стратегия с приоритетами, производством юнитов, ресурсной стратегией и боевыми действиями
+     */
     determineStrategy(analysis, turnNumber) {
         const phase = analysis.gamePhase;
         const strategy = {
@@ -48,6 +61,11 @@ class StrategyManager {
         return strategy;
     }
 
+    /**
+     * Получает приоритеты для конкретной фазы игры.
+     * @param {string} phase - Фаза игры: 'early', 'mid', 'late'
+     * @returns {Array} Массив приоритетов в порядке важности
+     */
     getPhasePriorities(phase) {
         const priorities = {
             early: [
@@ -73,6 +91,11 @@ class StrategyManager {
         return priorities[phase] || priorities.early;
     }
 
+    /**
+     * Определяет стратегию производства юнитов на основе текущего состояния.
+     * @param {Object} analysis - Анализ игры
+     * @returns {Object} Стратегия производства с оптимальными пропорциями, текущими пропорциями и следующим типом юнита
+     */
     determineUnitProduction(analysis) {
         const { gamePhase, units, threats, resources, economy } = analysis;
         const currentProportions = units.proportions;

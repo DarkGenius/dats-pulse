@@ -6,11 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Running the Bot
 ```bash
-npm start           # Start the bot with INFO logging
-npm run dev         # Start with DEBUG logging
-npm run debug       # Start with DEBUG logging and debug mode
+npm start           # Start the bot with INFO logging (includes visualizer)
+npm run dev         # Start with DEBUG logging (includes visualizer)
+npm run debug       # Start with DEBUG logging and debug mode (includes visualizer)
 npm run test-api    # Test API connection
+npm run visualizer  # Start only the visualizer server
 ```
+
+### Web Visualizer
+The bot automatically starts a web-based visualizer at `http://localhost:3001` when running. Features include:
+- Interactive hexagonal game map with zoom/pan
+- Real-time unit and resource visualization
+- Statistics dashboard with threat analysis
+- Movement paths and vision range display
+- Keyboard shortcuts for quick navigation
+- Round waiting overlay with real-time countdown timer
+- Automatic round detection and registration
 
 ### Environment Setup
 Copy `.env.example` to `.env` and configure:
@@ -18,6 +29,7 @@ Copy `.env.example` to `.env` and configure:
 - `API_TOKEN` - Authentication token
 - `TEAM_NAME` - Team identifier
 - `LOG_LEVEL` - Logging level (DEBUG, INFO, WARN, ERROR)
+- `VISUALIZER_PORT` - Port for visualizer server (default: 3001)
 
 ## Architecture Overview
 
@@ -27,9 +39,12 @@ Copy `.env.example` to `.env` and configure:
 - Coordinates all subsystems
 - Handles API communication through `ApiClient`
 - Executes turn-based decision making
+- Manages round lifecycle and automatic registration
+- Integrates with web visualizer for real-time updates
 
 **ApiClient** (`src/api/ApiClient.js`) - HTTP client for game API
 - Handles registration, game state retrieval, and move submission
+- Round information retrieval via `/api/rounds` endpoint
 - Uses custom HTTP implementation with proper error handling
 
 **Game Analysis & Strategy Engine:**
@@ -38,6 +53,13 @@ Copy `.env.example` to `.env` and configure:
 - **UnitManager** - Manages unit behavior and movement
 - **ResourceManager** - Handles resource collection and logistics
 - **CombatManager** - Implements combat formations and tactics
+- **RoundManager** - Handles round lifecycle, waiting for available rounds, and automatic registration
+
+**Visualization System:**
+- **WebSocketServer** (`visualizer/src/WebSocketServer.js`) - Real-time communication server
+- **GameRenderer** (`visualizer/public/gameRenderer.js`) - Hexagonal grid rendering and game visualization
+- **StatsUpdater** (`visualizer/public/statsUpdater.js`) - Real-time statistics display
+- **HexGrid** (`visualizer/public/hexgrid.js`) - Hexagonal coordinate system and grid mathematics
 
 ### Strategic Framework
 
@@ -102,13 +124,59 @@ Custom logger (`src/utils/Logger.js`) with levels:
 
 Set `LOG_LEVEL=DEBUG` in environment for detailed debugging.
 
+## Round Management
+
+### Automatic Round Detection
+The bot automatically detects and manages game rounds:
+- **Round Status Monitoring** - Checks `/api/rounds` endpoint every 30 seconds
+- **Automatic Registration** - Registers for available rounds automatically
+- **Lobby Timeout Handling** - Gracefully handles "lobby ended" errors
+- **Round Waiting** - Waits for next available round when current lobby is closed
+
+### Round Lifecycle
+1. **Check Available Rounds** - Query API for current and upcoming rounds
+2. **Register for Active Round** - Attempt registration if round is active
+3. **Wait for Next Round** - If no active round, wait for next scheduled round
+4. **Automatic Start** - Begin gameplay once successfully registered
+
+### Visualizer Integration
+- **Waiting Overlay** - Full-screen overlay during round waiting
+- **Real-time Countdown** - Updates every second until round start
+- **Round Information** - Displays round name and start time
+- **Status Updates** - Shows current round status and connection state
+
 ## Key Files
 
+### Core Application
 - `index.js` - Application entry point
-- `src/GameBot.js` - Main game controller
-- `src/api/ApiClient.js` - Game API communication
+- `src/GameBot.js` - Main game controller with round management
+- `src/api/ApiClient.js` - Game API communication including rounds endpoint
 - `src/constants/GameConstants.js` - Game constants and unit stats
-- `src/game/` - Game logic modules (strategy, analysis, management)
+- `src/game/RoundManager.js` - Round lifecycle management and waiting logic
 - `src/utils/Logger.js` - Logging utility
+
+### Game Logic Modules
+- `src/game/GameAnalyzer.js` - Game state analysis and metrics
+- `src/game/StrategyManager.js` - Three-phase strategy implementation
+- `src/game/UnitManager.js` - Unit behavior and movement
+- `src/game/ResourceManager.js` - Resource collection and logistics
+- `src/game/CombatManager.js` - Combat formations and tactics
+
+### Visualization System
+- `visualizer/src/WebSocketServer.js` - WebSocket server for real-time updates
+- `visualizer/public/index.html` - Web interface with round waiting overlay
+- `visualizer/public/gameRenderer.js` - Hexagonal grid and game object rendering
+- `visualizer/public/statsUpdater.js` - Real-time statistics display
+- `visualizer/public/hexgrid.js` - Hexagonal coordinate system
+- `visualizer/public/visualizer.js` - Main visualizer controller with countdown timer
+
+### Documentation
 - `CONSTANTS.md` - Documentation of game constants
 - `strategy.md` - Strategy documentation
+- `visualizer/README.md` - Visualizer usage and development guide
+
+## Memories
+
+- Received initial guidance for the AI strategy and implementation details
+- Initialized core architecture components for game bot system
+- Developed robust unit management and resource optimization strategies

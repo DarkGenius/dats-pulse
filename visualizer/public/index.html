@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DatsPulse Game Visualizer</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>DatsPulse Game Visualizer</h1>
+            <div class="connection-status">
+                <span id="connection-indicator" class="status-offline">Disconnected</span>
+            </div>
+        </header>
+        
+        <div id="round-waiting-overlay" class="round-waiting-overlay hidden">
+            <div class="waiting-content">
+                <h2>Ожидание начала раунда</h2>
+                <div class="waiting-info">
+                    <p id="waiting-message">Проверка доступных раундов...</p>
+                    <div id="countdown-timer" class="countdown-timer"></div>
+                    <div id="round-info" class="round-info"></div>
+                </div>
+                <div class="waiting-spinner"></div>
+            </div>
+        </div>
+        
+        <div class="main-content">
+            <div class="game-view">
+                <div class="game-canvas-container">
+                    <canvas id="gameCanvas" width="800" height="600"></canvas>
+                    <div class="game-controls">
+                        <button id="zoomIn">+</button>
+                        <button id="zoomOut">-</button>
+                        <button id="centerView">Center</button>
+                        <button id="followUnits">Follow Units</button>
+                    </div>
+                </div>
+                
+                <div class="legend">
+                    <h3>Legend</h3>
+                    <div class="legend-item">
+                        <div class="legend-color anthill"></div>
+                        <span>Anthill</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color worker"></div>
+                        <span>Worker</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color scout"></div>
+                        <span>Scout</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color soldier"></div>
+                        <span>Soldier</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color enemy"></div>
+                        <span>Enemy</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color nectar"></div>
+                        <span>Nectar (60 cal)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color bread"></div>
+                        <span>Bread (25 cal)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color apple"></div>
+                        <span>Apple (10 cal)</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="stats-panel">
+                <div class="stats-section">
+                    <h3>Game Info</h3>
+                    <div class="stat-item">
+                        <span>Turn:</span>
+                        <span id="turn-number">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Phase:</span>
+                        <span id="game-phase">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Score:</span>
+                        <span id="score">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Calories/Turn:</span>
+                        <span id="calories-per-turn">-</span>
+                    </div>
+                </div>
+                
+                <div class="stats-section">
+                    <h3>Units</h3>
+                    <div class="stat-item">
+                        <span>Total:</span>
+                        <span id="total-units">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Workers:</span>
+                        <span id="worker-count">-</span>
+                        <span class="percentage" id="worker-percentage">(-)</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Scouts:</span>
+                        <span id="scout-count">-</span>
+                        <span class="percentage" id="scout-percentage">(-)</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Soldiers:</span>
+                        <span id="soldier-count">-</span>
+                        <span class="percentage" id="soldier-percentage">(-)</span>
+                    </div>
+                </div>
+                
+                <div class="stats-section">
+                    <h3>Resources</h3>
+                    <div class="stat-item">
+                        <span>Nectar Sources:</span>
+                        <span id="nectar-sources">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Bread Sources:</span>
+                        <span id="bread-sources">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Apple Sources:</span>
+                        <span id="apple-sources">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>High Value Resources:</span>
+                        <span id="high-value-resources">-</span>
+                    </div>
+                </div>
+                
+                <div class="stats-section">
+                    <h3>Threats</h3>
+                    <div class="stat-item">
+                        <span>Threat Level:</span>
+                        <span id="threat-level" class="threat-indicator">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Immediate Threats:</span>
+                        <span id="immediate-threats">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Enemy Units:</span>
+                        <span id="enemy-units">-</span>
+                    </div>
+                </div>
+                
+                <div class="stats-section">
+                    <h3>Strategy</h3>
+                    <div class="stat-item">
+                        <span>Next Unit:</span>
+                        <span id="next-unit">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Formation:</span>
+                        <span id="formation">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Stance:</span>
+                        <span id="combat-stance">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="hexgrid.js"></script>
+    <script src="gameRenderer.js"></script>
+    <script src="statsUpdater.js"></script>
+    <script src="visualizer.js"></script>
+</body>
+</html>

@@ -5,7 +5,14 @@ const {
     UNIT_STATS 
 } = require('../constants/GameConstants');
 
+/**
+ * Управляет боевыми операциями, формированиями и тактикой.
+ * Определяет боевые строи, планирует атаки и оборону, анализирует угрозы и определяет оптимальные тактики.
+ */
 class CombatManager {
+    /**
+     * Инициализирует менеджер боёв с константами игры, формированиями и тактикой.
+     */
     constructor() {
         this.unitTypes = UNIT_TYPES;
         this.unitTypeNames = UNIT_TYPE_NAMES;
@@ -30,6 +37,12 @@ class CombatManager {
         this.activeEngagements = new Map();
     }
 
+    /**
+     * Планирует комплексные боевые действия на основе анализа и стратегии.
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия игры
+     * @returns {Object} Объект с массивом боевых действий
+     */
     planCombatActions(analysis, strategy) {
         const actions = [];
         
@@ -47,6 +60,11 @@ class CombatManager {
         return { actions };
     }
 
+    /**
+     * Анализирует текущие боевые ситуации и определяет угрозы.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив боевых ситуаций
+     */
     analyzeCombatSituations(analysis) {
         const situations = [];
         const myUnits = analysis.units.myUnits;
@@ -79,6 +97,12 @@ class CombatManager {
         return situations;
     }
 
+    /**
+     * Планирует боевые формирования на основе стратегической ситуации.
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия игры
+     * @returns {Array} Массив действий по формированию боевых порядков
+     */
     planFormations(analysis, strategy) {
         const actions = [];
         const combatReadiness = strategy.combatStrategy.readiness;
@@ -106,6 +130,11 @@ class CombatManager {
         return actions;
     }
 
+    /**
+     * Планирует наступательное формирование для атаки.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Наступательное формирование или null
+     */
     planOffensiveFormation(analysis) {
         const fighters = analysis.units.myUnits.filter(u => u.type === this.unitTypes.SOLDIER);
         const scouts = analysis.units.myUnits.filter(u => u.type === this.unitTypes.SCOUT);
@@ -121,6 +150,11 @@ class CombatManager {
         return null;
     }
 
+    /**
+     * Планирует оборонительное формирование для защиты.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Оборонительное формирование или null
+     */
     planDefensiveFormation(analysis) {
         const allCombatUnits = analysis.units.myUnits.filter(u => 
             u.type === this.unitTypes.SOLDIER || u.type === this.unitTypes.SCOUT
@@ -133,6 +167,11 @@ class CombatManager {
         return this.createDefensiveRing(allCombatUnits, analysis);
     }
 
+    /**
+     * Планирует чрезвычайное оборонительное формирование при непосредственной угрозе.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Чрезвычайное оборонительное формирование или null
+     */
     planEmergencyFormation(analysis) {
         const allUnits = analysis.units.myUnits;
         const anthill = analysis.units.anthill;
@@ -151,6 +190,13 @@ class CombatManager {
         };
     }
 
+    /**
+     * Создаёт формирование "трёхлистник" - оффенсивное построение с бойцами в центре и разведчиками на флангах.
+     * @param {Array} fighters - Массив боевых юнитов
+     * @param {Array} scouts - Массив разведчиков
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Объект формирования "трёхлистник" или null
+     */
     createTrileafFormation(fighters, scouts, analysis) {
         const targets = this.identifyOffensiveTargets(analysis);
         if (targets.length === 0) {
@@ -173,6 +219,12 @@ class CombatManager {
         };
     }
 
+    /**
+     * Создаёт клиновидное формирование для пробива вражеских линий.
+     * @param {Array} fighters - Массив боевых юнитов
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Объект клиновидного формирования или null
+     */
     createWedgeFormation(fighters, analysis) {
         const targets = this.identifyOffensiveTargets(analysis);
         if (targets.length === 0) {
@@ -195,6 +247,12 @@ class CombatManager {
         };
     }
 
+    /**
+     * Создаёт концентрическое оборонительное формирование с несколькими кольцами обороны.
+     * @param {Array} units - Массив всех боевых юнитов
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Объект концентрического формирования или null
+     */
     createConcentricFormation(units, analysis) {
         const anthill = analysis.units.anthill;
         if (!anthill) {
@@ -213,6 +271,12 @@ class CombatManager {
         };
     }
 
+    /**
+     * Создаёт оборонительное кольцо вокруг муравейника.
+     * @param {Array} units - Массив обороняющих юнитов
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Объект оборонительного кольца или null
+     */
     createDefensiveRing(units, analysis) {
         const anthill = analysis.units.anthill;
         if (!anthill) {
@@ -231,6 +295,13 @@ class CombatManager {
         };
     }
 
+    /**
+     * Вычисляет позиции юнитов в формировании "трёхлистник".
+     * @param {Object} center - Центральная позиция формирования
+     * @param {Array} fighters - Массив боевых юнитов
+     * @param {Array} scouts - Массив разведчиков
+     * @returns {Array} Массив позиций юнитов с ролями
+     */
     calculateTrileafPositions(center, fighters, scouts) {
         const positions = [];
         
@@ -268,6 +339,12 @@ class CombatManager {
         return positions;
     }
 
+    /**
+     * Вычисляет позиции юнитов в клиновидном формировании.
+     * @param {Object} tip - Остриё клина
+     * @param {Array} fighters - Массив боевых юнитов
+     * @returns {Array} Массив позиций юнитов с ролями
+     */
     calculateWedgePositions(tip, fighters) {
         const positions = [];
         
@@ -292,6 +369,12 @@ class CombatManager {
         return positions;
     }
 
+    /**
+     * Организует юниты в концентрические кольца обороны.
+     * @param {Array} units - Массив всех доступных юнитов
+     * @param {Object} center - Центр обороны (муравейник)
+     * @returns {Object} Объект с кольцами обороны
+     */
     organizeConcentricRings(units, center) {
         const rings = {
             inner: [],
@@ -324,6 +407,13 @@ class CombatManager {
         return rings;
     }
 
+    /**
+     * Вычисляет позицию юнита на кольце заданного радиуса.
+     * @param {Object} center - Центр кольца
+     * @param {number} radius - Радиус кольца
+     * @param {number} unitIndex - Индекс юнита на кольце
+     * @returns {Object} Позиция юнита с координатами x, y
+     */
     calculateRingPosition(center, radius, unitIndex) {
         const angle = (unitIndex * 2 * Math.PI) / 8;
         return {
@@ -332,6 +422,12 @@ class CombatManager {
         };
     }
 
+    /**
+     * Вычисляет позиции для оборонительного кольца.
+     * @param {Object} center - Центр обороны
+     * @param {number} unitCount - Количество юнитов
+     * @returns {Array} Массив позиций
+     */
     calculateDefensiveRingPositions(center, unitCount) {
         const positions = [];
         const radius = 3;
@@ -347,6 +443,12 @@ class CombatManager {
         return positions;
     }
 
+    /**
+     * Вычисляет оборонительные позиции для конкретных юнитов.
+     * @param {Array} units - Массив обороняющих юнитов
+     * @param {Object} center - Центр обороны
+     * @returns {Array} Массив позиций с назначенными юнитами
+     */
     calculateDefensivePositions(units, center) {
         const positions = [];
         const radius = 2;
@@ -366,6 +468,12 @@ class CombatManager {
         return positions;
     }
 
+    /**
+     * Планирует тактические действия на основе боевой готовности.
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия игры
+     * @returns {Array} Массив тактических действий
+     */
     planTacticalActions(analysis, strategy) {
         const actions = [];
         const combatReadiness = strategy.combatStrategy.readiness;
@@ -384,6 +492,12 @@ class CombatManager {
         return actions;
     }
 
+    /**
+     * Планирует наступательные тактики для каждой цели.
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия с целями для атаки
+     * @returns {Array} Массив наступательных действий
+     */
     planAttackTactics(analysis, strategy) {
         const actions = [];
         const targets = strategy.combatStrategy.targets;
@@ -406,6 +520,11 @@ class CombatManager {
         return actions;
     }
 
+    /**
+     * Планирует тактику отступления всех юнитов в муравейник.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив действий по отступлению
+     */
     planRetreatTactics(analysis) {
         const actions = [];
         const myUnits = analysis.units.myUnits;
@@ -428,6 +547,11 @@ class CombatManager {
         return actions;
     }
 
+    /**
+     * Планирует тактику удержания позиций без атаки.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив действий по удержанию позиций
+     */
     planHoldTactics(analysis) {
         const actions = [];
         const combatUnits = analysis.units.myUnits.filter(u => 
@@ -454,6 +578,12 @@ class CombatManager {
         return actions;
     }
 
+    /**
+     * Выбирает оптимальную атакующую тактику на основе боевого превосходства.
+     * @param {Object} target - Цель для атаки
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Объект с тактикой атаки или null
+     */
     selectAttackTactic(target, analysis) {
         const targetUnit = target.unit;
         const availableUnits = this.getAvailableAttackUnits(targetUnit, analysis);
@@ -473,6 +603,13 @@ class CombatManager {
         }
     }
 
+    /**
+     * Создаёт тактику прямого штурма при значительном превосходстве.
+     * @param {Array} units - Массив атакующих юнитов
+     * @param {Object} target - Цель атаки
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object} Объект тактики прямого штурма
+     */
     createDirectAssault(units, target, analysis) {
         return {
             type: this.tactics.AGGRESSIVE,
@@ -486,6 +623,13 @@ class CombatManager {
         };
     }
 
+    /**
+     * Создаёт тактику координированной атаки с основными силами и фланговыми манёврами.
+     * @param {Array} units - Массив атакующих юнитов
+     * @param {Object} target - Цель атаки
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object} Объект тактики координированной атаки
+     */
     createCoordinatedAttack(units, target, analysis) {
         const fighters = units.filter(u => u.type === this.unitTypes.SOLDIER);
         const scouts = units.filter(u => u.type === this.unitTypes.SCOUT);
@@ -503,6 +647,13 @@ class CombatManager {
         };
     }
 
+    /**
+     * Создаёт тактику "удари-отступи" для слабых сил или равных по силе.
+     * @param {Array} units - Массив атакующих юнитов
+     * @param {Object} target - Цель атаки
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object} Объект тактики "удари-отступи"
+     */
     createHitAndRun(units, target, analysis) {
         const fastUnits = units.filter(u => u.type === this.unitTypes.SCOUT);
         
@@ -518,6 +669,13 @@ class CombatManager {
         };
     }
 
+    /**
+     * Создаёт организованный план отступления с маршрутами и прикрытием.
+     * @param {Array} units - Массив отступающих юнитов
+     * @param {Object} anthill - Муравейник (место назначения)
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object} Объект плана отступления
+     */
     createRetreatPlan(units, anthill, analysis) {
         const retreatRoutes = this.calculateRetreatRoutes(units, anthill, analysis);
         
@@ -530,6 +688,12 @@ class CombatManager {
         };
     }
 
+    /**
+     * Планирует нацеливание и распределение юнитов по целям.
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия с целями
+     * @returns {Array} Массив действий по нацеливанию
+     */
     planTargeting(analysis, strategy) {
         const actions = [];
         const targets = strategy.combatStrategy.targets;
@@ -544,6 +708,12 @@ class CombatManager {
         return actions;
     }
 
+    /**
+     * Создаёт действие по нацеливанию на конкретную цель.
+     * @param {Object} target - Цель для атаки
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Объект действия по нацеливанию или null
+     */
     createTargetingAction(target, analysis) {
         const assignedUnits = this.assignUnitsToTarget(target, analysis);
         
@@ -560,6 +730,12 @@ class CombatManager {
         };
     }
 
+    /**
+     * Назначает юниты для атаки конкретной цели.
+     * @param {Object} target - Цель для атаки
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив назначенных на цель юнитов
+     */
     assignUnitsToTarget(target, analysis) {
         const availableUnits = this.getAvailableAttackUnits(target.unit, analysis);
         const requiredForce = this.calculateRequiredForce(target.unit);
@@ -568,6 +744,11 @@ class CombatManager {
         return assignedUnits;
     }
 
+    /**
+     * Рассчитывает количество юнитов, необходимых для эффективной атаки цели.
+     * @param {Object} targetUnit - Целевой юнит
+     * @returns {number} Количество юнитов для атаки
+     */
     calculateRequiredForce(targetUnit) {
         const targetStrength = this.getUnitStrength(targetUnit);
         
@@ -580,11 +761,22 @@ class CombatManager {
         }
     }
 
+    /**
+     * Получает боевую мощь юнита.
+     * @param {Object} unit - Юнит
+     * @returns {number} Боевая мощь юнита
+     */
     getUnitStrength(unit) {
         const unitStats = this.unitStats[unit.type];
         return unitStats ? unitStats.attack : 25;
     }
 
+    /**
+     * Вычисляет боевое превосходство союзников над противниками.
+     * @param {Array} allies - Массив союзных юнитов
+     * @param {Array} enemies - Массив вражеских юнитов
+     * @returns {number} Коэффициент превосходства
+     */
     calculateCombatAdvantage(allies, enemies) {
         const allyStrength = allies.reduce((sum, ally) => sum + this.getUnitStrength(ally), 0);
         const enemyStrength = enemies.reduce((sum, enemy) => sum + this.getUnitStrength(enemy), 0);
@@ -592,6 +784,11 @@ class CombatManager {
         return enemyStrength > 0 ? allyStrength / enemyStrength : 2.0;
     }
 
+    /**
+     * Определяет вражеские юниты, подходящие для наступательных операций.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив подходящих для атаки вражеских юнитов
+     */
     identifyOffensiveTargets(analysis) {
         const enemyUnits = analysis.units.enemyUnits;
         const myUnits = analysis.units.myUnits;
@@ -606,6 +803,11 @@ class CombatManager {
         });
     }
 
+    /**
+     * Определяет вражеские юниты, представляющие угрозу муравейнику.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив вражеских юнитов рядом с муравейником
+     */
     identifyAnthillThreats(analysis) {
         const anthill = analysis.units.anthill;
         if (!anthill) {
@@ -617,6 +819,11 @@ class CombatManager {
         );
     }
 
+    /**
+     * Получает список юнитов, способных защищать муравейник.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив юнитов в радиусе защиты муравейника
+     */
     getAnthillDefenders(analysis) {
         const anthill = analysis.units.anthill;
         if (!anthill) {
@@ -628,6 +835,12 @@ class CombatManager {
         );
     }
 
+    /**
+     * Получает список юнитов, доступных для атаки конкретной цели.
+     * @param {Object} target - Цель для атаки
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив боеспособных и свободных юнитов
+     */
     getAvailableAttackUnits(target, analysis) {
         const myUnits = analysis.units.myUnits;
         
@@ -640,10 +853,21 @@ class CombatManager {
         });
     }
 
+    /**
+     * Проверяет, занят ли юнит активным боем.
+     * @param {Object} unit - Юнит
+     * @returns {boolean} true, если юнит в активном бою
+     */
     isUnitBusy(unit) {
         return this.activeEngagements.has(unit.id);
     }
 
+    /**
+     * Вычисляет оптимальный центр формирования между муравейником и целью.
+     * @param {Object} target - Цель атаки
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object} Координаты центра формирования
+     */
     calculateFormationCenter(target, analysis) {
         const anthill = analysis.units.anthill;
         if (!anthill) {
@@ -658,6 +882,12 @@ class CombatManager {
         return midpoint;
     }
 
+    /**
+     * Вычисляет позицию острия клиновидного формирования.
+     * @param {Object} target - Цель атаки
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object} Координаты острия клина
+     */
     calculateWedgeTip(target, analysis) {
         const anthill = analysis.units.anthill;
         if (!anthill) {
@@ -677,6 +907,11 @@ class CombatManager {
         };
     }
 
+    /**
+     * Нормализует вектор направления до единичной длины.
+     * @param {Object} direction - Вектор направления с компонентами x, y
+     * @returns {Object} Нормализованный вектор
+     */
     normalizeDirection(direction) {
         const magnitude = Math.sqrt(direction.x * direction.x + direction.y * direction.y);
         
@@ -690,6 +925,12 @@ class CombatManager {
         };
     }
 
+    /**
+     * Вычисляет путь отступления от цели в сторону муравейника.
+     * @param {Object} target - Позиция, от которой отступать
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив точек пути отступления
+     */
     calculateRetreatPath(target, analysis) {
         const anthill = analysis.units.anthill;
         if (!anthill) {
@@ -715,6 +956,13 @@ class CombatManager {
         ];
     }
 
+    /**
+     * Рассчитывает безопасные маршруты отступления для каждого юнита.
+     * @param {Array} units - Массив отступающих юнитов
+     * @param {Object} anthill - Муравейник (место назначения)
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив маршрутов с назначенными юнитами
+     */
     calculateRetreatRoutes(units, anthill, analysis) {
         const routes = [];
         
@@ -729,6 +977,13 @@ class CombatManager {
         return routes;
     }
 
+    /**
+     * Находит наиболее безопасный путь от юнита к месту назначения.
+     * @param {Object} unit - Исходный юнит
+     * @param {Object} destination - Место назначения
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Наиболее безопасный путь
+     */
     calculateSafestPath(unit, destination, analysis) {
         const threats = analysis.threats.threats;
         const directPath = this.calculateDirectPath(unit, destination);
@@ -749,6 +1004,12 @@ class CombatManager {
         return safestPath;
     }
 
+    /**
+     * Вычисляет прямой путь между двумя точками.
+     * @param {Object} start - Начальная точка
+     * @param {Object} end - Конечная точка
+     * @returns {Array} Массив точек прямого пути
+     */
     calculateDirectPath(start, end) {
         const path = [];
         let current = { x: start.x, y: start.y };
@@ -768,6 +1029,12 @@ class CombatManager {
         return path;
     }
 
+    /**
+     * Генерирует альтернативные пути с обходом потенциальных опасностей.
+     * @param {Object} start - Начальная точка
+     * @param {Object} end - Конечная точка
+     * @returns {Array} Массив альтернативных маршрутов
+     */
     generateAlternativePaths(start, end) {
         const paths = [];
         
@@ -796,6 +1063,12 @@ class CombatManager {
         return paths;
     }
 
+    /**
+     * Оценивает уровень угрозы на маршруте.
+     * @param {Array} path - Массив точек маршрута
+     * @param {Array} threats - Массив угроз
+     * @returns {number} Общий уровень угрозы на маршруте
+     */
     calculatePathThreatLevel(path, threats) {
         let threatLevel = 0;
         
@@ -811,6 +1084,11 @@ class CombatManager {
         return threatLevel;
     }
 
+    /**
+     * Выбирает юниты для прикрытия отступления.
+     * @param {Array} units - Массив всех отступающих юнитов
+     * @returns {Array} Массив юнитов для прикрытия
+     */
     selectRearguard(units) {
         const fighters = units.filter(u => u.type === 'fighter');
         const scouts = units.filter(u => u.type === 'scout');
@@ -818,6 +1096,12 @@ class CombatManager {
         return [...fighters.slice(0, 2), ...scouts.slice(0, 1)];
     }
 
+    /**
+     * Рассчитывает фазы отступления для организованного отхода.
+     * @param {Array} units - Массив отступающих юнитов
+     * @param {Object} anthill - Муравейник (место назначения)
+     * @returns {Array} Массив фаз отступления
+     */
     calculateRetreatPhases(units, anthill) {
         const phases = [];
         const unitGroups = this.groupUnitsForRetreat(units);
@@ -834,6 +1118,11 @@ class CombatManager {
         return phases;
     }
 
+    /**
+     * Группирует юниты для поэтапного отступления.
+     * @param {Array} units - Массив отступающих юнитов
+     * @returns {Array} Массив групп юнитов
+     */
     groupUnitsForRetreat(units) {
         const groups = [];
         const groupSize = 3;
@@ -845,6 +1134,12 @@ class CombatManager {
         return groups;
     }
 
+    /**
+     * Вычисляет оборонительные позиции для удержания.
+     * @param {Array} units - Массив обороняющих юнитов
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив оборонительных позиций
+     */
     calculateHoldingPositions(units, analysis) {
         const positions = [];
         const anthill = analysis.units.anthill;
@@ -871,6 +1166,12 @@ class CombatManager {
         return positions;
     }
 
+    /**
+     * Вычисляет приоритет цели на основе типа и расстояния от муравейника.
+     * @param {Object} target - Цель для оценки
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {number} Приоритет цели
+     */
     calculateTargetPriority(target, analysis) {
         let priority = 0;
         
@@ -897,6 +1198,13 @@ class CombatManager {
         return priority;
     }
 
+    /**
+     * Определяет оптимальный подход к атаке на основе боевого превосходства.
+     * @param {Object} target - Цель атаки
+     * @param {Array} units - Массив атакующих юнитов
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {string} Тип подхода: 'direct', 'coordinated', или 'cautious'
+     */
     determineApproach(target, units, analysis) {
         const combatAdvantage = this.calculateCombatAdvantage(units, [target.unit]);
         
@@ -909,6 +1217,10 @@ class CombatManager {
         }
     }
 
+    /**
+     * Обновляет список активных боевых столкновений.
+     * @param {Object} analysis - Анализ состояния игры
+     */
     updateActiveEngagements(analysis) {
         const currentTime = Date.now();
         const engagementTimeout = 30000;
@@ -937,6 +1249,12 @@ class CombatManager {
         });
     }
 
+    /**
+     * Вычисляет расстояние между двумя позициями в гексагональной системе координат.
+     * @param {Object} pos1 - Первая позиция с координатами x, y
+     * @param {Object} pos2 - Вторая позиция с координатами x, y
+     * @returns {number} Расстояние в гексагональных клетках или Infinity при ошибке
+     */
     calculateDistance(pos1, pos2) {
         if (!pos1 || !pos2) return Infinity;
         

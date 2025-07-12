@@ -8,7 +8,15 @@ const {
     UNIT_STATS 
 } = require('../constants/GameConstants');
 
+/**
+ * Анализирует состояние игры и предоставляет метрики для принятия стратегических решений.
+ * Обрабатывает данные о юнитах, ресурсах, угрозах, территории и экономике.
+ */
 class GameAnalyzer {
+    /**
+     * Создает новый экземпляр анализатора игры.
+     * Инициализирует константы и типы для анализа.
+     */
     constructor() {
         this.foodTypes = FOOD_TYPES;
         this.unitTypes = UNIT_TYPES;
@@ -18,6 +26,11 @@ class GameAnalyzer {
         this.unitStats = UNIT_STATS;
     }
 
+    /**
+     * Выполняет полный анализ состояния игры.
+     * @param {Object} gameState - Текущее состояние игры от API
+     * @returns {Object} Объект с результатами анализа всех аспектов игры
+     */
     analyze(gameState) {
         const analysis = {
             gamePhase: this.determineGamePhase(gameState),
@@ -33,6 +46,11 @@ class GameAnalyzer {
         return analysis;
     }
 
+    /**
+     * Определяет текущую фазу игры на основе номера хода.
+     * @param {Object} gameState - Состояние игры
+     * @returns {string} Фаза игры: 'early' (1-20), 'mid' (21-50), 'late' (51+)
+     */
     determineGamePhase(gameState) {
         const turn = gameState.turnNo || 0;
         
@@ -45,6 +63,11 @@ class GameAnalyzer {
         }
     }
 
+    /**
+     * Анализирует юниты игрока и противников.
+     * @param {Object} gameState - Состояние игры
+     * @returns {Object} Анализ юнитов с подсчетом, пропорциями и местоположением муравейника
+     */
     analyzeUnits(gameState) {
         const myUnits = gameState.ants || [];
         const enemyUnits = gameState.enemies || [];
@@ -80,6 +103,11 @@ class GameAnalyzer {
         };
     }
 
+    /**
+     * Находит координаты муравейника игрока.
+     * @param {Object} gameState - Состояние игры
+     * @returns {Object|null} Координаты муравейника {q, r} или null если не найден
+     */
     findAnthill(gameState) {
         if (!gameState.home) return null;
         
@@ -89,6 +117,11 @@ class GameAnalyzer {
         };
     }
 
+    /**
+     * Анализирует доступные ресурсы и их приоритеты.
+     * @param {Object} gameState - Состояние игры
+     * @returns {Object} Анализ ресурсов с группировкой по типам, расстояниям и приоритетами
+     */
     analyzeResources(gameState) {
         const resources = gameState.food || [];
         
@@ -108,6 +141,12 @@ class GameAnalyzer {
         };
     }
 
+    /**
+     * Вычисляет расстояния от муравейника до всех ресурсов.
+     * @param {Object} resourcesByType - Ресурсы, сгруппированные по типам
+     * @param {Object} gameState - Состояние игры
+     * @returns {Object} Ресурсы с расстояниями, отсортированные по близости
+     */
     calculateResourceDistances(resourcesByType, gameState) {
         const anthill = this.findAnthill(gameState);
         if (!anthill) return {};
@@ -124,6 +163,12 @@ class GameAnalyzer {
         return distances;
     }
 
+    /**
+     * Определяет высокоценные ресурсы на основе типа и расстояния.
+     * @param {Object} resourcesByType - Ресурсы по типам
+     * @param {Object} resourceDistances - Ресурсы с расстояниями
+     * @returns {Array} Список высокоценных ресурсов с приоритетами
+     */
     identifyHighValueResources(resourcesByType, resourceDistances) {
         const highValue = [];
         
@@ -143,6 +188,11 @@ class GameAnalyzer {
         });
     }
 
+    /**
+     * Анализирует угрозы от вражеских юнитов.
+     * @param {Object} gameState - Состояние игры
+     * @returns {Object} Анализ угроз с уровнями опасности и классификацией по расстоянию
+     */
     analyzeThreats(gameState) {
         const myUnits = gameState.units ? gameState.units.filter(unit => unit.player_id === gameState.player_id) : [];
         const enemyUnits = gameState.units ? gameState.units.filter(unit => unit.player_id !== gameState.player_id) : [];
@@ -170,6 +220,13 @@ class GameAnalyzer {
         };
     }
 
+    /**
+     * Вычисляет уровень угрозы от конкретного вражеского юнита.
+     * @param {Object} enemy - Вражеский юнит
+     * @param {number} distanceToAnthill - Расстояние до муравейника
+     * @param {number} alliesNearby - Количество союзников рядом
+     * @returns {number} Числовой уровень угрозы
+     */
     calculateThreatLevel(enemy, distanceToAnthill, alliesNearby) {
         let threatLevel = 0;
         
@@ -194,6 +251,11 @@ class GameAnalyzer {
         return threatLevel;
     }
 
+    /**
+     * Вычисляет общий уровень угрозы от всех вражеских юнитов.
+     * @param {Array} threats - Список угроз
+     * @returns {number} Общий уровень угрозы от 0 до 1
+     */
     calculateOverallThreatLevel(threats) {
         if (threats.length === 0) return 0;
         
@@ -203,6 +265,11 @@ class GameAnalyzer {
         return Math.min(1, (totalThreat / 10) + (maxThreat / 5));
     }
 
+    /**
+     * Анализирует контроль территории и возможности расширения.
+     * @param {Object} gameState - Состояние игры
+     * @returns {Object} Анализ территории с контролируемой областью, спорными зонами и возможностями расширения
+     */
     analyzeTerritory(gameState) {
         const myUnits = gameState.units ? gameState.units.filter(unit => unit.player_id === gameState.player_id) : [];
         const enemyUnits = gameState.units ? gameState.units.filter(unit => unit.player_id !== gameState.player_id) : [];
@@ -217,6 +284,11 @@ class GameAnalyzer {
         };
     }
 
+    /**
+     * Вычисляет размер контролируемой территории на основе зон видимости юнитов.
+     * @param {Array} myUnits - Юниты игрока
+     * @returns {number} Количество контролируемых клеток
+     */
     calculateControlledArea(myUnits) {
         const controlledCells = new Set();
         
@@ -234,6 +306,11 @@ class GameAnalyzer {
         return controlledCells.size;
     }
 
+    /**
+     * Получает дальность видимости юнита по его типу.
+     * @param {number} unitType - Тип юнита
+     * @returns {number} Дальность видимости в гексах
+     */
     getUnitVision(unitType) {
         const unitTypeName = this.unitTypeNames[unitType];
         if (!unitTypeName) return 2;
@@ -246,6 +323,12 @@ class GameAnalyzer {
         return visionMap[unitTypeName] || 2;
     }
 
+    /**
+     * Находит спорные области где есть противостояние с врагами.
+     * @param {Array} myUnits - Юниты игрока
+     * @param {Array} enemyUnits - Вражеские юниты
+     * @returns {Array} Список спорных областей с информацией о противостоящих силах
+     */
     findContestedAreas(myUnits, enemyUnits) {
         const contested = [];
         
@@ -266,6 +349,12 @@ class GameAnalyzer {
         return contested;
     }
 
+    /**
+     * Определяет возможности для территориального расширения к неконтролируемым ресурсам.
+     * @param {Array} myUnits - Юниты игрока
+     * @param {Object} gameState - Состояние игры
+     * @returns {Array} Список возможностей расширения, отсортированный по эффективности
+     */
     identifyExpansionOpportunities(myUnits, gameState) {
         const resources = gameState.resources || [];
         const opportunities = [];
