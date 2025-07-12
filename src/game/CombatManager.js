@@ -92,35 +92,70 @@ class CombatManager {
             }
         }
         
-        // Priority 2: Attack nearest enemies
-        soldiers.forEach(soldier => {
-            // Find enemies within reasonable distance (20 hexes)
-            const nearbyEnemies = enemyUnits.filter(enemy => 
-                this.calculateDistance(soldier, enemy) <= 20
-            );
-            
-            if (nearbyEnemies.length > 0) {
-                // Sort by distance
-                nearbyEnemies.sort((a, b) => 
-                    this.calculateDistance(soldier, a) - this.calculateDistance(soldier, b)
-                );
-                
-                const target = nearbyEnemies[0];
-                const path = this.findPath(soldier, target, analysis);
-                
+        // Priority 2: Handle wounded soldiers first (retreat if health < 30%)
+        const woundedSoldiers = soldiers.filter(soldier => 
+            soldier.health && soldier.health < (this.unitStats.SOLDIER?.health * 0.3 || 30)
+        );
+        
+        woundedSoldiers.forEach(soldier => {
+            if (anthill) {
+                const path = this.findPath(soldier, anthill, analysis);
                 if (path && path.length > 0) {
                     moves.push({
                         unit_id: soldier.id,
                         path: path,
                         assignment: {
-                            type: 'attack_enemy',
-                            target: target,
+                            type: 'retreat_wounded',
+                            target: anthill,
                             priority: 'high'
                         }
                     });
-                    logger.info(`Soldier ${soldier.id} attacking enemy at (${target.q}, ${target.r})`);
+                    logger.info(`Wounded soldier ${soldier.id} retreating to base (health: ${soldier.health})`);
                 }
-            } else if (anthill) {
+            }
+        });
+        
+        // Priority 3: Attack enemies with healthy soldiers (focus fire)
+        const healthySoldiers = soldiers.filter(soldier => 
+            !woundedSoldiers.includes(soldier)
+        );
+        
+        if (healthySoldiers.length > 0) {
+            const nearbyEnemies = enemyUnits.filter(enemy => 
+                healthySoldiers.some(soldier => this.calculateDistance(soldier, enemy) <= 20)
+            );
+            
+            if (nearbyEnemies.length > 0) {
+                // FOCUS FIRE: All soldiers target the same enemy (highest priority)
+                const priorityTarget = this.selectPriorityTarget(nearbyEnemies, anthill);
+                
+                healthySoldiers.forEach(soldier => {
+                    if (this.calculateDistance(soldier, priorityTarget) <= 20) {
+                        const path = this.findPath(soldier, priorityTarget, analysis);
+                        
+                        if (path && path.length > 0) {
+                            moves.push({
+                                unit_id: soldier.id,
+                                path: path,
+                                assignment: {
+                                    type: 'focus_fire',
+                                    target: priorityTarget,
+                                    priority: 'high'
+                                }
+                            });
+                            logger.info(`Soldier ${soldier.id} focusing fire on priority target at (${priorityTarget.q}, ${priorityTarget.r})`);
+                        }
+                    }
+                });
+            }
+        }
+        
+        // Priority 4: Patrol for soldiers without combat tasks
+        healthySoldiers.forEach(soldier => {
+            // Check if this soldier already has a combat assignment
+            const hasAssignment = moves.some(move => move.unit_id === soldier.id);
+            
+            if (!hasAssignment && anthill) {
                 // No enemies visible - patrol around anthill
                 const patrolPoint = this.getPatrolPoint(soldier, anthill, analysis);
                 if (patrolPoint) {
@@ -152,21 +187,50 @@ class CombatManager {
      * @returns {Object|null} Patrol point or null
      */
     getPatrolPoint(soldier, anthill, analysis) {
-        // Patrol in a circle around anthill at distance 8-10
-        const patrolRadius = 10;
+        const gameState = analysis.gameState;
+        const turn = gameState.turnNo || 0;
+        
+        // AGGRESSIVE SCOUTING: Early game - send soldiers to explore for enemy bases
+        if (turn < 100) {
+            // Send soldiers to explore in different directions from base
+            const explorationRadius = 20 + (turn / 5); // Gradually expand search
+            const directions = [
+                { q: 1, r: 0 },   // East
+                { q: 0, r: 1 },   // Southeast  
+                { q: -1, r: 1 },  // Southwest
+                { q: -1, r: 0 },  // West
+                { q: 0, r: -1 },  // Northwest
+                { q: 1, r: -1 }   // Northeast
+            ];
+            
+            // Choose direction based on soldier ID for consistent exploration
+            const dirIndex = Math.abs(soldier.id.charCodeAt(0)) % directions.length;
+            const direction = directions[dirIndex];
+            
+            return {
+                q: anthill.q + Math.round(explorationRadius * direction.q),
+                r: anthill.r + Math.round(explorationRadius * direction.r)
+            };
+        }
+        
+        // DEFENSIVE PATROL: Later game - patrol defensively around base
+        const patrolRadius = 15;
         const currentDistance = this.calculateDistance(soldier, anthill);
         
-        // If too close, move away
-        if (currentDistance < 8) {
-            const angle = Math.atan2(soldier.r - anthill.r, soldier.q - anthill.q);
+        // Add randomness to make patrol less predictable
+        const randomOffset = (Math.random() - 0.5) * Math.PI / 2; // ±45 degrees random
+        
+        if (currentDistance < 10) {
+            // Move outward to patrol perimeter
+            const angle = Math.atan2(soldier.r - anthill.r, soldier.q - anthill.q) + randomOffset;
             return {
                 q: anthill.q + Math.round(patrolRadius * Math.cos(angle)),
                 r: anthill.r + Math.round(patrolRadius * Math.sin(angle))
             };
         }
         
-        // If at good distance, patrol around
-        const angleOffset = Math.PI / 4; // 45 degrees
+        // Continue patrol with random movement
+        const angleOffset = (Math.PI / 3) + randomOffset; // 60 degrees + random
         const currentAngle = Math.atan2(soldier.r - anthill.r, soldier.q - anthill.q);
         const newAngle = currentAngle + angleOffset;
         
@@ -202,6 +266,51 @@ class CombatManager {
         }
         
         return path;
+    }
+    
+    /**
+     * Selects the highest priority enemy target for focus fire.
+     * @param {Array} enemies - Array of enemy units
+     * @param {Object} anthill - Our anthill position
+     * @returns {Object} Highest priority enemy target
+     */
+    selectPriorityTarget(enemies, anthill) {
+        if (enemies.length === 1) return enemies[0];
+        
+        // Priority 1: Closest to anthill (most dangerous)
+        // Priority 2: Lowest health (easiest to kill)
+        // Priority 3: Highest threat type (soldiers > scouts > workers)
+        
+        let bestTarget = null;
+        let bestScore = -1;
+        
+        enemies.forEach(enemy => {
+            let score = 0;
+            
+            // Closer to anthill = higher priority
+            const distanceToBase = anthill ? this.calculateDistance(enemy, anthill) : 50;
+            score += Math.max(0, 50 - distanceToBase) * 3;
+            
+            // Lower health = easier target
+            const health = enemy.health || 100;
+            score += Math.max(0, 100 - health) * 2;
+            
+            // Higher threat unit types
+            if (enemy.type === this.unitTypes.SOLDIER) {
+                score += 50; // Soldiers are high priority
+            } else if (enemy.type === this.unitTypes.SCOUT) {
+                score += 20; // Scouts medium priority
+            } else {
+                score += 10; // Workers low priority
+            }
+            
+            if (score > bestScore) {
+                bestScore = score;
+                bestTarget = enemy;
+            }
+        });
+        
+        return bestTarget || enemies[0];
     }
     
     /**

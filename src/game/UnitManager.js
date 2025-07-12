@@ -176,7 +176,14 @@ class UnitManager {
             }
         }
         
-        return this.defaultBehavior(unit, analysis);
+        // Workers and scouts without assignments should not patrol
+        // Only soldiers get defaultBehavior (patrol)
+        if (unit.type === this.unitTypes.SOLDIER) {
+            return this.defaultBehavior(unit, analysis);
+        }
+        
+        // Non-combat units without tasks stay still
+        return null;
     }
 
     /**
