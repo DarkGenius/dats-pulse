@@ -127,7 +127,7 @@ class CombatManager {
             
             if (nearbyEnemies.length > 0) {
                 // FOCUS FIRE: All soldiers target the same enemy (highest priority)
-                const priorityTarget = this.selectPriorityTarget(nearbyEnemies, anthill);
+                const priorityTarget = this.selectPriorityTarget(nearbyEnemies, anthill, myUnits);
                 
                 healthySoldiers.forEach(soldier => {
                     if (this.calculateDistance(soldier, priorityTarget) <= 20) {
@@ -526,12 +526,14 @@ class CombatManager {
      * @param {Object} anthill - Our anthill position
      * @returns {Object} Highest priority enemy target
      */
-    selectPriorityTarget(enemies, anthill) {
+    selectPriorityTarget(enemies, anthill, myUnits = []) {
         if (enemies.length === 1) return enemies[0];
         
-        // Priority 1: Closest to anthill (most dangerous)
-        // Priority 2: Lowest health (easiest to kill)
-        // Priority 3: Highest threat type (soldiers > scouts > workers)
+        // Advanced threat assessment:
+        // 1. Current DPS potential
+        // 2. Actively attacking our units
+        // 3. Threat to economy (near workers/resources)
+        // 4. Traditional factors (distance, health, type)
         
         let bestTarget = null;
         let bestScore = -1;
@@ -539,22 +541,35 @@ class CombatManager {
         enemies.forEach(enemy => {
             let score = 0;
             
-            // Closer to anthill = higher priority
-            const distanceToBase = anthill ? this.calculateDistance(enemy, anthill) : 50;
-            score += Math.max(0, 50 - distanceToBase) * 3;
+            // Factor 1: DPS potential based on unit type and health
+            const dps = this.calculateUnitDPS(enemy);
+            score += dps * 2; // DPS is very important
             
-            // Lower health = easier target
-            const health = enemy.health || 100;
-            score += Math.max(0, 100 - health) * 2;
-            
-            // Higher threat unit types
-            if (enemy.type === this.unitTypes.SOLDIER) {
-                score += 50; // Soldiers are high priority
-            } else if (enemy.type === this.unitTypes.SCOUT) {
-                score += 20; // Scouts medium priority
-            } else {
-                score += 10; // Workers low priority
+            // Factor 2: Is this enemy actively attacking our units?
+            const isAttackingOurUnits = this.isEnemyAttackingOurUnits(enemy, myUnits);
+            if (isAttackingOurUnits) {
+                score += 100; // Huge priority for enemies in active combat
+                logger.debug(`Enemy ${enemy.type} at (${enemy.q}, ${enemy.r}) is actively attacking our units - high priority!`);
             }
+            
+            // Factor 3: Threat to economy (near our workers or resource areas)
+            const economicThreat = this.calculateEconomicThreat(enemy, myUnits);
+            score += economicThreat * 4; // Economic threats are critical
+            
+            // Factor 4: Traditional distance to anthill
+            const distanceToBase = anthill ? this.calculateDistance(enemy, anthill) : 50;
+            score += Math.max(0, 30 - distanceToBase) * 2; // Reduced weight vs other factors
+            
+            // Factor 5: Ease of elimination (lower health = higher priority)
+            const health = enemy.health || 100;
+            const healthFactor = Math.max(0, 100 - health) * 1.5;
+            score += healthFactor;
+            
+            // Factor 6: Unit type base threat
+            const typeThreat = this.getUnitTypeThreat(enemy.type);
+            score += typeThreat;
+            
+            logger.debug(`Enemy threat score: ${enemy.type} at (${enemy.q}, ${enemy.r}) - DPS:${dps}, Attacking:${isAttackingOurUnits}, Economic:${economicThreat}, Distance:${distanceToBase}, Health:${health}, Total:${score}`);
             
             if (score > bestScore) {
                 bestScore = score;
@@ -562,7 +577,94 @@ class CombatManager {
             }
         });
         
+        if (bestTarget) {
+            logger.info(`🎯 Priority target selected: ${bestTarget.type} at (${bestTarget.q}, ${bestTarget.r}) with threat score ${bestScore}`);
+        }
+        
         return bestTarget || enemies[0];
+    }
+    
+    /**
+     * Calculates DPS (damage per second) potential of an enemy unit.
+     * @param {Object} enemy - Enemy unit
+     * @returns {number} DPS value
+     */
+    calculateUnitDPS(enemy) {
+        const unitStats = this.unitStats[enemy.type];
+        if (!unitStats) return 10; // Default low DPS
+        
+        const attack = unitStats.attack || 10;
+        const health = enemy.health || 100;
+        const maxHealth = unitStats.health || 100;
+        
+        // Scale DPS by current health percentage
+        const healthPercent = health / maxHealth;
+        return attack * healthPercent;
+    }
+    
+    /**
+     * Checks if an enemy is currently attacking any of our units.
+     * @param {Object} enemy - Enemy unit to check
+     * @param {Array} myUnits - Our units
+     * @returns {boolean} True if enemy is in combat with our units
+     */
+    isEnemyAttackingOurUnits(enemy, myUnits) {
+        // An enemy is considered "attacking" if it's adjacent to any of our units
+        // This indicates active combat
+        return myUnits.some(myUnit => {
+            const distance = this.calculateDistance(enemy, myUnit);
+            return distance <= 1; // Adjacent = in combat
+        });
+    }
+    
+    /**
+     * Calculates economic threat level of an enemy.
+     * @param {Object} enemy - Enemy unit
+     * @param {Array} myUnits - Our units 
+     * @returns {number} Economic threat score
+     */
+    calculateEconomicThreat(enemy, myUnits) {
+        let threat = 0;
+        
+        // Check how many workers are threatened by this enemy
+        const threatenedWorkers = myUnits.filter(unit => {
+            if (unit.type !== this.unitTypes.WORKER) return false;
+            const distance = this.calculateDistance(enemy, unit);
+            return distance <= 3; // Within 3 hexes = threatening
+        });
+        
+        // Each threatened worker adds to economic threat
+        threat += threatenedWorkers.length * 25;
+        
+        // Special threat for scouts near our workers (raid potential)
+        if (enemy.type === this.unitTypes.SCOUT && threatenedWorkers.length > 0) {
+            threat += 30; // Scouts can quickly kill workers
+        }
+        
+        // Soldiers near workers are extremely dangerous
+        if (enemy.type === this.unitTypes.SOLDIER && threatenedWorkers.length > 0) {
+            threat += 50; // Soldiers can devastate economy
+        }
+        
+        return threat;
+    }
+    
+    /**
+     * Gets base threat value for unit type.
+     * @param {number} unitType - Unit type
+     * @returns {number} Base threat value
+     */
+    getUnitTypeThreat(unitType) {
+        switch (unitType) {
+            case this.unitTypes.SOLDIER:
+                return 40; // High base threat
+            case this.unitTypes.SCOUT:
+                return 20; // Medium base threat
+            case this.unitTypes.WORKER:
+                return 5; // Low base threat
+            default:
+                return 10;
+        }
     }
     
     /**
