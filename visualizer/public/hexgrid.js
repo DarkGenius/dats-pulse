@@ -1,5 +1,5 @@
 class HexGrid {
-    constructor(canvas, cellSize = 20) {
+    constructor(canvas, cellSize = 20, onUpdate = null) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
         this.cellSize = cellSize;
@@ -8,6 +8,7 @@ class HexGrid {
         this.zoom = 1;
         this.minZoom = 0.5;
         this.maxZoom = 3;
+        this.onUpdate = onUpdate;
         
         this.isDragging = false;
         this.lastMouseX = 0;
@@ -33,6 +34,10 @@ class HexGrid {
                 
                 this.lastMouseX = e.clientX;
                 this.lastMouseY = e.clientY;
+
+                if (this.onUpdate) {
+                    this.onUpdate();
+                }
             }
         });
         
@@ -44,10 +49,8 @@ class HexGrid {
             e.preventDefault();
             const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
             const newZoom = this.zoom * zoomFactor;
-            
-            if (newZoom >= this.minZoom && newZoom <= this.maxZoom) {
-                this.zoom = newZoom;
-            }
+            const rect = this.canvas.getBoundingClientRect();
+            this.zoomToPoint(newZoom, e.clientX - rect.left, e.clientY - rect.top);
         });
     }
     
@@ -236,7 +239,7 @@ class HexGrid {
     }
     
     getViewBounds() {
-        const margin = 5;
+        const margin = 50;
         const topLeft = this.pixelToHex(0, 0);
         const bottomRight = this.pixelToHex(this.canvas.width, this.canvas.height);
         
@@ -257,7 +260,26 @@ class HexGrid {
     
     // Установка зума
     setZoom(newZoom) {
-        this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, newZoom));
+        this.zoomToPoint(newZoom, this.canvas.width / 2, this.canvas.height / 2);
+    }
+
+    zoomToPoint(newZoom, pointX, pointY) {
+        const clampedZoom = Math.max(this.minZoom, Math.min(this.maxZoom, newZoom));
+        if (clampedZoom === this.zoom) return;
+
+        const worldPos = this.pixelToHex(pointX, pointY);
+
+        const oldZoom = this.zoom;
+        this.zoom = clampedZoom;
+
+        const newPixelPos = this.hexToPixel(worldPos.q, worldPos.r);
+
+        this.offsetX += pointX - newPixelPos.x;
+        this.offsetY += pointY - newPixelPos.y;
+
+        if (this.onUpdate) {
+            this.onUpdate();
+        }
     }
     
     // Получение hex под курсором

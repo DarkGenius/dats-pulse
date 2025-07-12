@@ -2,7 +2,7 @@ class GameRenderer {
     constructor(canvas) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
-        this.hexGrid = new HexGrid(canvas, 25);
+        this.hexGrid = new HexGrid(canvas, 25, this.render.bind(this));
         
         this.gameState = null;
         this.analysis = null;
@@ -205,18 +205,20 @@ class GameRenderer {
     drawAnthill() {
         if (!this.gameState.home || !Array.isArray(this.gameState.home) || this.gameState.home.length === 0) return;
 
-        const home = this.gameState.home[0];
+        this.gameState.home.forEach((homeHex, index) => {
+            // Рисуем основание муравейника
+            this.hexGrid.drawHex(homeHex.q, homeHex.r, {
+                fill: this.colors.anthill,
+                stroke: '#ffffff',
+                strokeWidth: 3
+            });
 
-        // Рисуем основание муравейника
-        this.hexGrid.drawHex(home.q, home.r, {
-            fill: this.colors.anthill,
-            stroke: '#ffffff',
-            strokeWidth: 3
-        });
-
-        // Рисуем символ дома
-        this.hexGrid.drawText(home.q, home.r, '🏠', {
-            font: `${16 * this.hexGrid.zoom}px Arial`
+            // Рисуем символ дома только на центральном гексе (предполагаем, что он первый)
+            if (index === 0) {
+                this.hexGrid.drawText(homeHex.q, homeHex.r, '🏠', {
+                    font: `${16 * this.hexGrid.zoom}px Arial`
+                });
+            }
         });
     }
     
@@ -411,7 +413,7 @@ class GameRenderer {
             const unit = this.gameState.ants.find(ant => ant.q === q && ant.r === r);
             if (unit) {
                 const unitType = this.unitTypes[unit.type] || 'unknown';
-                info.push(`Unit: ${unitType}`);
+                info.push(`My Unit: ${unitType}`);
                 if (unit.health) info.push(`Health: ${unit.health}`);
                 if (unit.cargo) info.push(`Cargo: ${unit.cargo}`);
             }
@@ -421,7 +423,7 @@ class GameRenderer {
         if (this.gameState.enemies) {
             const enemy = this.gameState.enemies.find(e => e.q === q && e.r === r);
             if (enemy) {
-                info.push(`Enemy unit`);
+                info.push(`Enemy Unit`);
                 if (enemy.health) info.push(`Health: ${enemy.health}`);
             }
         }
@@ -437,8 +439,11 @@ class GameRenderer {
         }
         
         // Проверяем муравейник
-        if (this.gameState.home && this.gameState.home.q === q && this.gameState.home.r === r) {
-            info.push(`Anthill`);
+        if (this.gameState.home && Array.isArray(this.gameState.home)) {
+            const isAnthill = this.gameState.home.some(homeHex => homeHex.q === q && homeHex.r === r);
+            if (isAnthill) {
+                info.push(`Anthill`);
+            }
         }
         
         return info.length > 1 ? info.join('<br>') : null;
