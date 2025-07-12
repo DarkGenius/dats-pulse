@@ -1,0 +1,24 @@
+{
+  "roundId": "antprotocol-final-5",
+  "gameId": "1752333643411",
+  "teamName": "Drive Core",
+  "startTime": "2025-07-12T15:20:43.411Z",
+  "endTime": null,
+  "finalScore": null,
+  "finalPosition": null,
+  "turns": [],
+  "summary": {
+    "totalTurns": 0,
+    "peakCalories": 0,
+    "peakUnitCount": 0,
+    "resourcesCollected": {
+      "apples": 0,
+      "bread": 0,
+      "nectar": 0
+    },
+    "unitsLost": 0,
+    "enemiesDefeated": 0,
+    "movementsMade": 0,
+    "decisionsExecuted": 0
+  }
+}
