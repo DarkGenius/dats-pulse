@@ -245,8 +245,9 @@ class UnitManager {
         const unitTypeName = this.unitTypeNames[unit.type];
         
         if (unitTypeName === 'scout') {
-            // Scouts prioritize finding enemy bases and exploration
-            tasks.push('find_enemy_anthill', 'aggressive_exploration', 'exploration', 'resource_scouting');
+            // Scouts prioritize systematic exploration and enemy base finding
+            // They should avoid combat and focus on reconnaissance
+            tasks.push('systematic_exploration', 'find_enemy_anthill', 'avoid_combat_exploration', 'resource_scouting');
             // Централизованная система управляет всеми ресурсными задачами
         } else if (unitTypeName === 'soldier') {
             // Soldiers should not get any tasks from UnitManager
@@ -292,6 +293,10 @@ class UnitManager {
                 return this.exploreMap(unit, analysis);
             case 'aggressive_exploration':
                 return this.aggressiveExploration(unit, analysis);
+            case 'systematic_exploration':
+                return this.systematicExploration(unit, analysis);
+            case 'avoid_combat_exploration':
+                return this.avoidCombatExploration(unit, analysis);
             case 'find_enemy_anthill':
                 return this.findEnemyAnthill(unit, analysis);
             case 'raid_enemy_anthill':
@@ -2059,6 +2064,345 @@ class UnitManager {
         }
         
         return tasks;
+    }
+    /**
+     * Систематическая разведка карты для поиска вражеских муравейников.
+     * Разведчики движутся по спирали от базы, исследуя неизведанные области.
+     * @param {Object} unit - Юнит-разведчик
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Команда движения или null
+     */
+    systematicExploration(unit, analysis) {
+        const anthill = analysis.units.anthill;
+        if (!anthill) return null;
+        
+        const gameState = analysis.gameState;
+        const turn = gameState.turnNo || 0;
+        
+        // Определяем радиус исследования в зависимости от времени игры
+        const baseRadius = 15;
+        const expansionRate = 2;
+        const maxRadius = 60;
+        const currentRadius = Math.min(maxRadius, baseRadius + Math.floor(turn / 20) * expansionRate);
+        
+        // Генерируем точки для систематического исследования
+        const explorationPoints = this.generateSpiralPattern(anthill, currentRadius);
+        
+        // Фильтруем точки, которые еще не исследованы
+        const unexploredPoints = explorationPoints.filter(point => 
+            !this.isPositionExplored(point, analysis)
+        );
+        
+        if (unexploredPoints.length === 0) {
+            logger.debug(`Scout ${unit.id}: All points within radius ${currentRadius} explored, expanding search`);
+            // Если все близкие точки исследованы, расширяем поиск
+            const extendedPoints = this.generateSpiralPattern(anthill, currentRadius + 10);
+            unexploredPoints.push(...extendedPoints.slice(explorationPoints.length));
+        }
+        
+        // Выбираем ближайшую неисследованную точку
+        let targetPoint = null;
+        let minDistance = Infinity;
+        
+        for (const point of unexploredPoints) {
+            const distance = this.calculateDistance(unit, point);
+            if (distance < minDistance) {
+                minDistance = distance;
+                targetPoint = point;
+            }
+        }
+        
+        if (targetPoint) {
+            const path = this.findPath(unit, targetPoint, analysis);
+            if (path && path.length > 0) {
+                logger.info(`🔍 Scout ${unit.id} conducting systematic exploration to (${targetPoint.q}, ${targetPoint.r}) at radius ${currentRadius}`);
+                return {
+                    unit_id: unit.id,
+                    path: path,
+                    assignment: {
+                        type: 'systematic_exploration',
+                        target: targetPoint,
+                        priority: 'medium',
+                        explorationRadius: currentRadius
+                    }
+                };
+            }
+        }
+        
+        logger.debug(`Scout ${unit.id}: No valid exploration targets found`);
+        return null;
+    }
+    
+    /**
+     * Разведка с избеганием боя - разведчики исследуют карту, но отступают при виде врагов.
+     * @param {Object} unit - Юнит-разведчик
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Команда движения или null
+     */
+    avoidCombatExploration(unit, analysis) {
+        const anthill = analysis.units.anthill;
+        if (!anthill) return null;
+        
+        const enemyUnits = analysis.units.enemyUnits || [];
+        const threats = analysis.threats.threats || [];
+        
+        // Проверяем, есть ли враги поблизости
+        const nearbyEnemies = enemyUnits.filter(enemy => 
+            this.calculateDistance(unit, enemy) <= 10
+        );
+        
+        const nearbyThreats = threats.filter(threat => 
+            this.calculateDistance(unit, threat.unit) <= 8
+        );
+        
+        // Если рядом есть враги, отступаем к базе
+        if (nearbyEnemies.length > 0 || nearbyThreats.length > 0) {
+            logger.info(`🏃 Scout ${unit.id} retreating from combat: ${nearbyEnemies.length} enemies, ${nearbyThreats.length} threats nearby`);
+            
+            // Находим безопасную позицию между текущим местоположением и базой
+            const safeRetreatPosition = this.calculateSafeRetreatPosition(unit, anthill, enemyUnits);
+            
+            if (safeRetreatPosition) {
+                const path = this.findPath(unit, safeRetreatPosition, analysis);
+                if (path && path.length > 0) {
+                    return {
+                        unit_id: unit.id,
+                        path: path,
+                        assignment: {
+                            type: 'avoid_combat_exploration',
+                            target: safeRetreatPosition,
+                            priority: 'high',
+                            reason: 'retreating_from_enemies'
+                        }
+                    };
+                }
+            }
+            
+            // Если не можем найти безопасный путь отступления, идем прямо к базе
+            const path = this.findPath(unit, anthill, analysis);
+            if (path && path.length > 0) {
+                return {
+                    unit_id: unit.id,
+                    path: path,
+                    assignment: {
+                        type: 'avoid_combat_exploration',
+                        target: anthill,
+                        priority: 'high',
+                        reason: 'emergency_retreat'
+                    }
+                };
+            }
+        }
+        
+        // Если нет угроз, продолжаем разведку, но более осторожно
+        return this.cautiousExploration(unit, analysis);
+    }
+    
+    /**
+     * Осторожная разведка - исследование безопасных областей.
+     * @param {Object} unit - Юнит-разведчик
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Команда движения или null
+     */
+    cautiousExploration(unit, analysis) {
+        const anthill = analysis.units.anthill;
+        if (!anthill) return null;
+        
+        const maxSafeDistance = 25; // Ограничиваем дистанцию для безопасности
+        const currentDistance = this.calculateDistance(unit, anthill);
+        
+        // Если разведчик слишком далеко от базы, возвращаем его
+        if (currentDistance > maxSafeDistance) {
+            logger.info(`🔙 Scout ${unit.id} returning to base: too far from home (${currentDistance} > ${maxSafeDistance})`);
+            const path = this.findPath(unit, anthill, analysis);
+            if (path && path.length > 0) {
+                return {
+                    unit_id: unit.id,
+                    path: path,
+                    assignment: {
+                        type: 'avoid_combat_exploration',
+                        target: anthill,
+                        priority: 'medium',
+                        reason: 'return_to_safe_distance'
+                    }
+                };
+            }
+        }
+        
+        // Ищем безопасные области для исследования
+        const safeExplorationTargets = this.generateSafeExplorationTargets(unit, analysis, maxSafeDistance);
+        
+        if (safeExplorationTargets.length > 0) {
+            const target = safeExplorationTargets[0];
+            const path = this.findPath(unit, target, analysis);
+            
+            if (path && path.length > 0) {
+                logger.info(`🔍 Scout ${unit.id} cautious exploration to (${target.q}, ${target.r})`);
+                return {
+                    unit_id: unit.id,
+                    path: path,
+                    assignment: {
+                        type: 'avoid_combat_exploration',
+                        target: target,
+                        priority: 'medium',
+                        reason: 'safe_exploration'
+                    }
+                };
+            }
+        }
+        
+        logger.debug(`Scout ${unit.id}: No safe exploration targets found`);
+        return null;
+    }
+    
+    /**
+     * Вычисляет безопасную позицию для отступления.
+     * @param {Object} unit - Отступающий юнит
+     * @param {Object} safePosition - Безопасная позиция (обычно база)
+     * @param {Array} enemies - Массив вражеских юнитов
+     * @returns {Object|null} Безопасная позиция для отступления
+     */
+    calculateSafeRetreatPosition(unit, safePosition, enemies) {
+        if (!unit || !safePosition) return null;
+        
+        // Вычисляем направление от юнита к базе
+        const directionToSafety = {
+            q: safePosition.q - unit.q,
+            r: safePosition.r - unit.r
+        };
+        
+        // Нормализуем направление
+        const distance = this.calculateDistance(unit, safePosition);
+        if (distance === 0) return safePosition;
+        
+        const normalizedDir = {
+            q: directionToSafety.q / distance,
+            r: directionToSafety.r / distance
+        };
+        
+        // Ищем позицию на полпути к базе, которая далека от врагов
+        const retreatDistance = Math.min(8, Math.floor(distance / 2));
+        const retreatPosition = {
+            q: Math.round(unit.q + normalizedDir.q * retreatDistance),
+            r: Math.round(unit.r + normalizedDir.r * retreatDistance)
+        };
+        
+        // Проверяем, безопасна ли эта позиция
+        const isSafe = enemies.every(enemy => 
+            this.calculateDistance(retreatPosition, enemy) > 5
+        );
+        
+        return isSafe ? retreatPosition : safePosition;
+    }
+    
+    /**
+     * Генерирует безопасные цели для исследования.
+     * @param {Object} unit - Юнит-разведчик
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {number} maxDistance - Максимальная дистанция от базы
+     * @returns {Array} Массив безопасных целей для исследования
+     */
+    generateSafeExplorationTargets(unit, analysis, maxDistance) {
+        const anthill = analysis.units.anthill;
+        const enemyUnits = analysis.units.enemyUnits || [];
+        const threats = analysis.threats.threats || [];
+        
+        if (!anthill) return [];
+        
+        const targets = [];
+        const directions = [
+            { q: 1, r: 0 },   // East
+            { q: 0, r: 1 },   // Southeast  
+            { q: -1, r: 1 },  // Southwest
+            { q: -1, r: 0 },  // West
+            { q: 0, r: -1 },  // Northwest
+            { q: 1, r: -1 }   // Northeast
+        ];
+        
+        // Генерируем цели в разных направлениях на разных дистанциях
+        for (let distance = 8; distance <= maxDistance; distance += 4) {
+            for (const direction of directions) {
+                const target = {
+                    q: anthill.q + Math.round(direction.q * distance),
+                    r: anthill.r + Math.round(direction.r * distance)
+                };
+                
+                // Проверяем безопасность цели
+                const isSafe = this.isTargetSafeForScout(target, enemyUnits, threats);
+                const isUnexplored = !this.isPositionExplored(target, analysis);
+                
+                if (isSafe && isUnexplored) {
+                    targets.push({
+                        ...target,
+                        distance: this.calculateDistance(unit, target),
+                        safetyScore: this.calculateSafetyScore(target, enemyUnits, threats)
+                    });
+                }
+            }
+        }
+        
+        // Сортируем по безопасности и близости
+        targets.sort((a, b) => {
+            const safetyDiff = b.safetyScore - a.safetyScore;
+            if (Math.abs(safetyDiff) > 0.1) return safetyDiff;
+            return a.distance - b.distance;
+        });
+        
+        return targets.slice(0, 5); // Возвращаем топ-5 целей
+    }
+    
+    /**
+     * Проверяет, безопасна ли цель для разведчика.
+     * @param {Object} target - Целевая позиция
+     * @param {Array} enemies - Вражеские юниты
+     * @param {Array} threats - Угрозы
+     * @returns {boolean} true, если цель безопасна
+     */
+    isTargetSafeForScout(target, enemies, threats) {
+        const safeDistance = 8;
+        
+        // Проверяем расстояние до врагов
+        const tooCloseToEnemies = enemies.some(enemy => 
+            this.calculateDistance(target, enemy) < safeDistance
+        );
+        
+        // Проверяем расстояние до угроз
+        const tooCloseToThreats = threats.some(threat => 
+            this.calculateDistance(target, threat.unit) < safeDistance
+        );
+        
+        return !tooCloseToEnemies && !tooCloseToThreats;
+    }
+    
+    /**
+     * Вычисляет оценку безопасности позиции.
+     * @param {Object} position - Позиция для оценки
+     * @param {Array} enemies - Вражеские юниты
+     * @param {Array} threats - Угрозы
+     * @returns {number} Оценка безопасности (выше = безопаснее)
+     */
+    calculateSafetyScore(position, enemies, threats) {
+        let score = 100; // Базовая оценка
+        
+        // Штрафуем за близость к врагам
+        enemies.forEach(enemy => {
+            const distance = this.calculateDistance(position, enemy);
+            if (distance < 15) {
+                const penalty = Math.max(0, 50 - distance * 3);
+                score -= penalty;
+            }
+        });
+        
+        // Штрафуем за близость к угрозам
+        threats.forEach(threat => {
+            const distance = this.calculateDistance(position, threat.unit);
+            if (distance < 12) {
+                const penalty = Math.max(0, 40 - distance * 3);
+                score -= penalty;
+            }
+        });
+        
+        return Math.max(0, score);
     }
 }
 
