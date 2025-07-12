@@ -181,6 +181,7 @@ class CombatManager {
     
     /**
      * Gets a patrol point for a soldier around the anthill.
+     * Enhanced with strategic positioning and bottleneck control.
      * @param {Object} soldier - Soldier unit
      * @param {Object} anthill - Anthill position
      * @param {Object} analysis - Game state analysis
@@ -189,31 +190,228 @@ class CombatManager {
     getPatrolPoint(soldier, anthill, analysis) {
         const gameState = analysis.gameState;
         const turn = gameState.turnNo || 0;
+        const enemyUnits = analysis.units.enemyUnits || [];
+        const discoveredEnemyAnthills = gameState.discoveredEnemyAnthills || [];
         
-        // AGGRESSIVE SCOUTING: Early game - send soldiers to explore for enemy bases
-        if (turn < 100) {
-            // Send soldiers to explore in different directions from base
-            const explorationRadius = 20 + (turn / 5); // Gradually expand search
-            const directions = [
-                { q: 1, r: 0 },   // East
-                { q: 0, r: 1 },   // Southeast  
-                { q: -1, r: 1 },  // Southwest
-                { q: -1, r: 0 },  // West
-                { q: 0, r: -1 },  // Northwest
-                { q: 1, r: -1 }   // Northeast
-            ];
-            
-            // Choose direction based on soldier ID for consistent exploration
-            const dirIndex = Math.abs(soldier.id.charCodeAt(0)) % directions.length;
-            const direction = directions[dirIndex];
-            
-            return {
-                q: anthill.q + Math.round(explorationRadius * direction.q),
-                r: anthill.r + Math.round(explorationRadius * direction.r)
-            };
+        // STRATEGIC INTELLIGENCE: If we know enemy positions, patrol strategically
+        if (discoveredEnemyAnthills.length > 0) {
+            return this.getStrategicPatrolPoint(soldier, anthill, discoveredEnemyAnthills[0], analysis);
         }
         
-        // DEFENSIVE PATROL: Later game - patrol defensively around base
+        // AGGRESSIVE RECONNAISSANCE: Early to mid game - active enemy searching
+        if (turn < 150) {
+            return this.getAggressiveReconPoint(soldier, anthill, turn, analysis);
+        }
+        
+        // BOTTLENECK CONTROL: Look for strategic terrain features
+        const bottleneckPoint = this.findStrategicBottleneck(soldier, anthill, analysis);
+        if (bottleneckPoint) {
+            logger.debug(`Soldier ${soldier.id} moving to control bottleneck at (${bottleneckPoint.q}, ${bottleneckPoint.r})`);
+            return bottleneckPoint;
+        }
+        
+        // ADAPTIVE PATROL: React to recent enemy sightings
+        if (enemyUnits.length > 0) {
+            return this.getAdaptivePatrolPoint(soldier, anthill, enemyUnits, analysis);
+        }
+        
+        // DEFENSIVE PATROL: Default defensive ring around base
+        return this.getDefensivePatrolPoint(soldier, anthill, analysis);
+    }
+    
+    /**
+     * Strategic patrol when enemy base location is known.
+     * @param {Object} soldier - Soldier unit
+     * @param {Object} anthill - Our anthill
+     * @param {Object} enemyAnthill - Known enemy anthill
+     * @param {Object} analysis - Game state analysis
+     * @returns {Object} Strategic patrol position
+     */
+    getStrategicPatrolPoint(soldier, anthill, enemyAnthill, analysis) {
+        // Calculate vector from our base to enemy base
+        const threatVector = {
+            q: enemyAnthill.q - anthill.q,
+            r: enemyAnthill.r - anthill.r
+        };
+        
+        const threatDistance = this.calculateDistance(anthill, enemyAnthill);
+        const normalizedThreat = {
+            q: threatVector.q / threatDistance,
+            r: threatVector.r / threatDistance
+        };
+        
+        // Position soldiers between our base and enemy base
+        const interceptDistance = Math.min(25, threatDistance * 0.4);
+        const interceptPoint = {
+            q: Math.round(anthill.q + normalizedThreat.q * interceptDistance),
+            r: Math.round(anthill.r + normalizedThreat.r * interceptDistance)
+        };
+        
+        // Add some spread to avoid clustering
+        const spreadRadius = 5;
+        const soldierHash = Math.abs(soldier.id.charCodeAt(0)) % 8;
+        const spreadAngle = (soldierHash / 8) * Math.PI * 2;
+        
+        return {
+            q: interceptPoint.q + Math.round(Math.cos(spreadAngle) * spreadRadius),
+            r: interceptPoint.r + Math.round(Math.sin(spreadAngle) * spreadRadius)
+        };
+    }
+    
+    /**
+     * Aggressive reconnaissance patrol for early-mid game.
+     * @param {Object} soldier - Soldier unit
+     * @param {Object} anthill - Our anthill
+     * @param {number} turn - Current turn number
+     * @param {Object} analysis - Game state analysis
+     * @returns {Object} Reconnaissance patrol position
+     */
+    getAggressiveReconPoint(soldier, anthill, turn, analysis) {
+        // Expand search radius over time
+        const baseRadius = 20;
+        const expansionRate = 0.3;
+        const maxRadius = 45;
+        const currentRadius = Math.min(maxRadius, baseRadius + turn * expansionRate);
+        
+        // Define priority directions (likely enemy spawn areas)
+        const priorityDirections = [
+            { q: 1, r: 0, priority: 3 },    // East - high priority
+            { q: -1, r: 0, priority: 3 },   // West - high priority
+            { q: 0, r: 1, priority: 2 },    // Southeast - medium
+            { q: -1, r: 1, priority: 2 },   // Southwest - medium
+            { q: 0, r: -1, priority: 1 },   // Northwest - low
+            { q: 1, r: -1, priority: 1 }    // Northeast - low
+        ];
+        
+        // Choose direction based on soldier ID and priority weighting
+        const soldierIndex = Math.abs(soldier.id.charCodeAt(0)) % priorityDirections.length;
+        let directionIndex = soldierIndex;
+        
+        // Bias toward high-priority directions
+        const random = Math.random();
+        if (random < 0.6) { // 60% chance to pick high priority direction
+            const highPriorityDirs = priorityDirections
+                .map((dir, idx) => ({ ...dir, index: idx }))
+                .filter(dir => dir.priority >= 3);
+            if (highPriorityDirs.length > 0) {
+                directionIndex = highPriorityDirs[soldier.id.charCodeAt(1) % highPriorityDirs.length].index;
+            }
+        }
+        
+        const direction = priorityDirections[directionIndex];
+        
+        // Add some randomness to avoid predictable patterns
+        const randomOffset = (Math.random() - 0.5) * 0.4; // ±20% radius variation
+        const effectiveRadius = currentRadius * (1 + randomOffset);
+        
+        logger.debug(`Soldier ${soldier.id} aggressive recon to radius ${effectiveRadius.toFixed(1)} in direction (${direction.q}, ${direction.r}) priority ${direction.priority}`);
+        
+        return {
+            q: Math.round(anthill.q + direction.q * effectiveRadius),
+            r: Math.round(anthill.r + direction.r * effectiveRadius)
+        };
+    }
+    
+    /**
+     * Finds strategic bottlenecks or terrain features to control.
+     * @param {Object} soldier - Soldier unit
+     * @param {Object} anthill - Our anthill
+     * @param {Object} analysis - Game state analysis
+     * @returns {Object|null} Bottleneck position or null
+     */
+    findStrategicBottleneck(soldier, anthill, analysis) {
+        // For now, this is a placeholder. In a real implementation, this would:
+        // 1. Analyze the map data for narrow passages
+        // 2. Find bridge-like structures or chokepoints
+        // 3. Identify resource-rich areas that need protection
+        
+        // Simple implementation: patrol resource clusters
+        const resources = analysis.resources.visible || [];
+        if (resources.length === 0) return null;
+        
+        // Find resource clusters worth defending
+        const resourceClusters = this.findResourceClusters(resources);
+        if (resourceClusters.length === 0) return null;
+        
+        // Choose the most valuable cluster within reasonable distance
+        const maxDefenseDistance = 30;
+        const viableClusters = resourceClusters.filter(cluster => 
+            this.calculateDistance(anthill, cluster.center) <= maxDefenseDistance
+        );
+        
+        if (viableClusters.length === 0) return null;
+        
+        // Sort by value and pick the best one
+        viableClusters.sort((a, b) => b.totalValue - a.totalValue);
+        const targetCluster = viableClusters[0];
+        
+        // Position soldier near but not on top of the cluster
+        const offsetDistance = 3;
+        const angle = Math.atan2(targetCluster.center.r - anthill.r, targetCluster.center.q - anthill.q);
+        
+        return {
+            q: Math.round(targetCluster.center.q + Math.cos(angle + Math.PI) * offsetDistance),
+            r: Math.round(targetCluster.center.r + Math.sin(angle + Math.PI) * offsetDistance)
+        };
+    }
+    
+    /**
+     * Adaptive patrol that reacts to enemy positions.
+     * @param {Object} soldier - Soldier unit
+     * @param {Object} anthill - Our anthill
+     * @param {Array} enemies - Enemy units
+     * @param {Object} analysis - Game state analysis
+     * @returns {Object} Adaptive patrol position
+     */
+    getAdaptivePatrolPoint(soldier, anthill, enemies, analysis) {
+        // Find the average enemy position to determine threat direction
+        const avgEnemyPos = {
+            q: enemies.reduce((sum, enemy) => sum + enemy.q, 0) / enemies.length,
+            r: enemies.reduce((sum, enemy) => sum + enemy.r, 0) / enemies.length
+        };
+        
+        // Calculate interception vector
+        const threatVector = {
+            q: avgEnemyPos.q - anthill.q,
+            r: avgEnemyPos.r - anthill.r
+        };
+        
+        const threatDistance = Math.sqrt(threatVector.q * threatVector.q + threatVector.r * threatVector.r);
+        if (threatDistance === 0) return this.getDefensivePatrolPoint(soldier, anthill, analysis);
+        
+        const normalizedThreat = {
+            q: threatVector.q / threatDistance,
+            r: threatVector.r / threatDistance
+        };
+        
+        // Position soldier to intercept threat
+        const interceptDistance = Math.min(20, threatDistance * 0.6);
+        const baseInterceptPoint = {
+            q: anthill.q + normalizedThreat.q * interceptDistance,
+            r: anthill.r + normalizedThreat.r * interceptDistance
+        };
+        
+        // Add soldier-specific offset to avoid clustering
+        const soldierOffset = Math.abs(soldier.id.charCodeAt(0)) % 6;
+        const offsetAngle = (soldierOffset / 6) * Math.PI * 2;
+        const offsetRadius = 4;
+        
+        logger.debug(`Soldier ${soldier.id} adaptive patrol: intercepting threat from (${avgEnemyPos.q.toFixed(1)}, ${avgEnemyPos.r.toFixed(1)})`);
+        
+        return {
+            q: Math.round(baseInterceptPoint.q + Math.cos(offsetAngle) * offsetRadius),
+            r: Math.round(baseInterceptPoint.r + Math.sin(offsetAngle) * offsetRadius)
+        };
+    }
+    
+    /**
+     * Default defensive patrol around the base.
+     * @param {Object} soldier - Soldier unit
+     * @param {Object} anthill - Our anthill
+     * @param {Object} analysis - Game state analysis
+     * @returns {Object} Defensive patrol position
+     */
+    getDefensivePatrolPoint(soldier, anthill, analysis) {
         const patrolRadius = 15;
         const currentDistance = this.calculateDistance(soldier, anthill);
         
@@ -238,6 +436,60 @@ class CombatManager {
             q: anthill.q + Math.round(patrolRadius * Math.cos(newAngle)),
             r: anthill.r + Math.round(patrolRadius * Math.sin(newAngle))
         };
+    }
+    
+    /**
+     * Finds clusters of resources that are worth defending.
+     * @param {Array} resources - All visible resources
+     * @returns {Array} Array of resource clusters with centers and values
+     */
+    findResourceClusters(resources) {
+        const clusters = [];
+        const visited = new Set();
+        const clusterRadius = 5;
+        
+        resources.forEach((resource, index) => {
+            if (visited.has(index)) return;
+            
+            const cluster = {
+                resources: [resource],
+                center: { q: resource.q, r: resource.r },
+                totalValue: this.getResourceValue(resource)
+            };
+            
+            visited.add(index);
+            
+            // Find nearby resources to add to cluster
+            resources.forEach((otherResource, otherIndex) => {
+                if (visited.has(otherIndex)) return;
+                
+                const distance = this.calculateDistance(resource, otherResource);
+                if (distance <= clusterRadius) {
+                    cluster.resources.push(otherResource);
+                    cluster.totalValue += this.getResourceValue(otherResource);
+                    visited.add(otherIndex);
+                }
+            });
+            
+            if (cluster.resources.length > 1) {
+                // Recalculate center as average position
+                cluster.center.q = cluster.resources.reduce((sum, r) => sum + r.q, 0) / cluster.resources.length;
+                cluster.center.r = cluster.resources.reduce((sum, r) => sum + r.r, 0) / cluster.resources.length;
+                clusters.push(cluster);
+            }
+        });
+        
+        return clusters;
+    }
+    
+    /**
+     * Gets the caloric value of a resource.
+     * @param {Object} resource - Resource object
+     * @returns {number} Caloric value
+     */
+    getResourceValue(resource) {
+        const { FOOD_CALORIES } = require('../constants/GameConstants');
+        return FOOD_CALORIES[resource.type] || 0;
     }
     
     /**
