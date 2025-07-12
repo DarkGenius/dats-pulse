@@ -499,6 +499,18 @@ class GameBot {
         decisions.resourceActions = resourceDecisions.actions;
         decisions.combatActions = combatDecisions.actions;
         
+        // CRITICAL FIX: Add combat moves to unit moves
+        if (combatDecisions.moves && combatDecisions.moves.length > 0) {
+            // Combat moves have priority over other moves
+            // Remove any unit moves for soldiers that have combat assignments
+            const combatUnitIds = new Set(combatDecisions.moves.map(m => m.unit_id));
+            decisions.unitMoves = decisions.unitMoves.filter(m => !combatUnitIds.has(m.unit_id));
+            
+            // Add combat moves
+            decisions.unitMoves.push(...combatDecisions.moves);
+            logger.info(`Added ${combatDecisions.moves.length} combat moves to execution queue`);
+        }
+        
         // Сохраняем назначения юнитов из центрального менеджера
         analysis.units.myUnits.forEach(unit => {
             const assignment = this.resourceAssignmentManager.getUnitAssignment(unit.id);

@@ -36,16 +36,112 @@ class CombatManager {
         this.combatHistory = [];
         this.activeEngagements = new Map();
     }
+    
+    /**
+     * Планирует простые боевые движения: "видишь врага - атакуй".
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив команд движения для боевых юнитов
+     */
+    planSimpleCombatMoves(analysis) {
+        const moves = [];
+        const myUnits = analysis.units.myUnits;
+        const enemyUnits = analysis.units.enemyUnits;
+        const anthill = analysis.units.anthill;
+        
+        // Get all soldiers
+        const soldiers = myUnits.filter(unit => unit.type === this.unitTypes.SOLDIER);
+        
+        if (soldiers.length === 0 || enemyUnits.length === 0) {
+            return moves;
+        }
+        
+        // Priority 1: Defend anthill from immediate threats
+        if (anthill) {
+            const anthillThreats = enemyUnits.filter(enemy => 
+                this.calculateDistance(anthill, enemy) <= 8
+            );
+            
+            if (anthillThreats.length > 0) {
+                // Sort threats by distance to anthill
+                anthillThreats.sort((a, b) => 
+                    this.calculateDistance(anthill, a) - this.calculateDistance(anthill, b)
+                );
+                
+                // Assign available soldiers to defend
+                soldiers.forEach(soldier => {
+                    if (anthillThreats.length > 0) {
+                        const target = anthillThreats[0];
+                        const path = this.calculateDirectPath(soldier, target);
+                        
+                        if (path && path.length > 0) {
+                            moves.push({
+                                unit_id: soldier.id,
+                                path: path,
+                                assignment: {
+                                    type: 'defend_anthill',
+                                    target: target,
+                                    priority: 'critical'
+                                }
+                            });
+                            logger.info(`Soldier ${soldier.id} defending anthill from enemy at (${target.q}, ${target.r})`);
+                        }
+                    }
+                });
+                
+                return moves; // All soldiers defend if anthill is threatened
+            }
+        }
+        
+        // Priority 2: Attack nearest enemies
+        soldiers.forEach(soldier => {
+            // Find nearest enemy
+            let nearestEnemy = null;
+            let minDistance = Infinity;
+            
+            enemyUnits.forEach(enemy => {
+                const distance = this.calculateDistance(soldier, enemy);
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    nearestEnemy = enemy;
+                }
+            });
+            
+            if (nearestEnemy && minDistance <= 20) { // Attack enemies within 20 hexes
+                const path = this.calculateDirectPath(soldier, nearestEnemy);
+                
+                if (path && path.length > 0) {
+                    moves.push({
+                        unit_id: soldier.id,
+                        path: path,
+                        assignment: {
+                            type: 'attack_enemy',
+                            target: nearestEnemy,
+                            priority: 'high'
+                        }
+                    });
+                    logger.info(`Soldier ${soldier.id} attacking enemy at (${nearestEnemy.q}, ${nearestEnemy.r}), distance: ${minDistance}`);
+                }
+            }
+        });
+        
+        return moves;
+    }
 
     /**
      * Планирует комплексные боевые действия на основе анализа и стратегии.
      * @param {Object} analysis - Анализ состояния игры
      * @param {Object} strategy - Стратегия игры
-     * @returns {Object} Объект с массивом боевых действий
+     * @returns {Object} Объект с массивом боевых действий и движений
      */
     planCombatActions(analysis, strategy) {
         const actions = [];
+        const moves = [];
         
+        // CRITICAL FIX: Simple "see enemy, attack" logic
+        const combatMoves = this.planSimpleCombatMoves(analysis);
+        moves.push(...combatMoves);
+        
+        // Keep the old complex logic for future use
         this.updateActiveEngagements(analysis);
         
         const combatSituations = this.analyzeCombatSituations(analysis);
@@ -57,7 +153,7 @@ class CombatManager {
         actions.push(...tacticalActions);
         actions.push(...targetingActions);
         
-        return { actions };
+        return { actions, moves };
     }
 
     /**
