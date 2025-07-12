@@ -57,9 +57,14 @@ class ResourceManager {
         const availableResources = resourceAssignmentManager.getAvailableResources(analysis.resources.visible);
         
         if (availableUnits.length === 0 || availableResources.length === 0) {
-            logger.debug(`No resource collection: ${availableUnits.length} available units, ${availableResources.length} available resources`);
+            logger.info(`🚫 No resource collection: ${availableUnits.length} available units, ${availableResources.length} available resources (total units: ${analysis.units.myUnits.length}, total resources: ${analysis.resources.visible.length})`);
+            if (availableUnits.length === 0 && analysis.units.myUnits.length > 0) {
+                logger.info(`Units status: ${analysis.units.myUnits.map(u => `${u.id}(${this.unitTypeNames[u.type]}) - assigned: ${!!resourceAssignmentManager.getUnitAssignment(u.id)}`).join(', ')}`);
+            }
             return { actions };
         }
+        
+        logger.info(`🔍 Resource assignment: ${availableUnits.length} available units, ${availableResources.length} available resources`);
         
         // Приоритизируем доступные ресурсы
         const prioritizedResources = this.prioritizeAvailableResources(availableResources, analysis, strategy);
@@ -102,7 +107,9 @@ class ResourceManager {
                     
                     actions.push(gatherAction);
                     
-                    logger.info(`💎 Unit ${bestUnit.id} assigned to collect ${gatherAction.resource_type} at (${resourceInfo.resource.q}, ${resourceInfo.resource.r}) with priority ${priority}`);
+                    logger.info(`✅ Unit ${bestUnit.id} (${this.unitTypeNames[bestUnit.type]}) assigned to collect ${gatherAction.resource_type} at (${resourceInfo.resource.q}, ${resourceInfo.resource.r}) with priority ${priority}`);
+                } else {
+                    logger.warn(`❌ Failed to reserve resource for unit ${bestUnit.id}: resource at (${resourceInfo.resource.q}, ${resourceInfo.resource.r}) could not be reserved`);
                 }
             }
         });
@@ -833,11 +840,20 @@ class ResourceManager {
     getAvailableUnitsForReservation(analysis, resourceAssignmentManager) {
         // CRITICAL FIX: Only workers (type 1) and scouts (type 3) should collect resources
         // Soldiers (type 2) should focus on combat
-        return analysis.units.myUnits.filter(unit => 
-            unit.type !== this.unitTypes.SOLDIER && // Exclude soldiers from resource collection
-            !resourceAssignmentManager.getUnitAssignment(unit.id) && 
-            !this.isUnitInCombat(unit, analysis)
-        );
+        const allNonSoldiers = analysis.units.myUnits.filter(unit => unit.type !== this.unitTypes.SOLDIER);
+        const availableUnits = allNonSoldiers.filter(unit => {
+            const hasAssignment = !!resourceAssignmentManager.getUnitAssignment(unit.id);
+            const inCombat = this.isUnitInCombat(unit, analysis);
+            
+            if (hasAssignment || inCombat) {
+                logger.debug(`Unit ${unit.id} (${this.unitTypeNames[unit.type]}) unavailable: assignment=${hasAssignment}, inCombat=${inCombat}`);
+            }
+            
+            return !hasAssignment && !inCombat;
+        });
+        
+        logger.debug(`Available units for resource collection: ${availableUnits.length}/${allNonSoldiers.length} (excluded ${analysis.units.myUnits.length - allNonSoldiers.length} soldiers)`);
+        return availableUnits;
     }
 
     /**

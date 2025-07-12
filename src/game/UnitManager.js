@@ -66,6 +66,7 @@ class UnitManager {
         // ПРИОРИТЕТ 1: Проверяем, есть ли уже назначение из центрального менеджера
         const centralAssignment = resourceAssignmentManager.getUnitAssignment(unit.id);
         if (centralAssignment) {
+            logger.info(`🎯 Unit ${unit.id} executing central assignment to collect ${centralAssignment.resourceType || 'resource'} at (${centralAssignment.target.q}, ${centralAssignment.target.r})`);
             return this.executeResourceAssignment(unit, centralAssignment, analysis);
         }
         
@@ -74,7 +75,7 @@ class UnitManager {
         if (unit.type !== this.unitTypes.SOLDIER && 
             this.canCollectResources(unit) && 
             this.hasAvailableResources(analysis)) {
-            logger.debug(`Unit ${unit.id} waiting for resource assignment from central manager`);
+            logger.info(`⏳ Unit ${unit.id} (${this.unitTypeNames[unit.type]}) waiting for resource assignment from central manager. Available resources: ${analysis.resources.visible.length}`);
             // Don't patrol - just stay still or return to base
             return null;
         }
