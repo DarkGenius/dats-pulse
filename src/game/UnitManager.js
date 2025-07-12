@@ -765,28 +765,13 @@ class UnitManager {
             }
         }
 
-        // Fallback to old method if A* fails (for backward compatibility)
-        logger.debug(`A* pathfinding failed, falling back to direct path for unit ${unit.id}`);
-        const directPath = this.calculateDirectPath(unit, target);
-        
-        if (directPath.length > 0) {
-            const validation = this.pathValidator.validateAndCorrectPath(unit, directPath, analysis.gameState);
-            if (validation.validPath.length > 0) {
-                return this.verifySafety(validation.validPath, analysis);
-            }
-        }
-
-        // No path found
+        // No fallback - if A* can't find a path, it means there's no valid path
         logger.debug(`No valid path found for unit ${unit.id} to target (${target.q}, ${target.r})`);
         return null;
     }
 
-    /**
-     * Вычисляет прямой путь между двумя точками в гексагональной системе координат.
-     * @param {Object} start - Начальная позиция с координатами q, r
-     * @param {Object} end - Конечная позиция с координатами q, r
-     * @returns {Array} Массив точек пути от start до end (не включая start)
-     */
+    // DEPRECATED: Direct path calculation replaced by A* pathfinding
+    /*
     calculateDirectPath(start, end) {
         if (!start || !end) return [];
         
@@ -813,6 +798,7 @@ class UnitManager {
         
         return path;
     }
+    */
 
     /**
      * Определяет следующий шаг в направлении цели
