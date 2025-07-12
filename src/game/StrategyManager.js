@@ -540,6 +540,7 @@ class StrategyManager {
     shouldEnterRecoveryMode(analysis, turnNumber) {
         if (this.recoveryModeTriggered) return false; // Already in recovery
         if (this.unitCountHistory.length < 3) return false; // Not enough history
+        if (turnNumber < 10) return false; // Don't trigger recovery in very early game
         
         const currentUnits = analysis.units.counts.total;
         const recentHistory = this.unitCountHistory.slice(-3); // Last 3 turns
@@ -550,16 +551,16 @@ class StrategyManager {
         const startUnits = recentHistory[0].total;
         const lossRate = startUnits > 0 ? (startUnits - currentUnits) / startUnits : 0;
         
-        // Recovery conditions:
-        // 1. Lost more than 40% of army in last 3 turns
-        // 2. Have fewer than 5 total units
-        // 3. Have no soldiers and enemies are present
-        const significantLoss = lossRate > 0.4;
-        const criticallyLow = currentUnits < 5;
-        const noSoldiers = analysis.units.counts.soldier === 0 && analysis.units.enemyUnits.length > 0;
+        // Recovery conditions (more conservative):
+        // 1. Lost more than 40% of army in last 3 turns AND have at least 8 starting units
+        // 2. Have fewer than 3 total units (extreme situation)
+        // 3. Have no soldiers and enemies are present AND turn > 15
+        const significantLoss = lossRate > 0.4 && startUnits >= 8;
+        const extremelyLow = currentUnits < 3;
+        const noSoldiers = analysis.units.counts.soldier === 0 && analysis.units.enemyUnits.length > 0 && turnNumber > 15;
         
-        if (significantLoss || criticallyLow || noSoldiers) {
-            logger.warn(`Recovery triggers: Loss=${(lossRate*100).toFixed(1)}%, Total=${currentUnits}, Soldiers=${analysis.units.counts.soldier}, Enemies=${analysis.units.enemyUnits.length}`);
+        if (significantLoss || extremelyLow || noSoldiers) {
+            logger.warn(`Recovery triggers: Loss=${(lossRate*100).toFixed(1)}%, Total=${currentUnits}, Soldiers=${analysis.units.counts.soldier}, Enemies=${analysis.units.enemyUnits.length}, Turn=${turnNumber}`);
             return true;
         }
         

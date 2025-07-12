@@ -634,7 +634,7 @@ class GameAnalyzer {
             if (data.interest > 5) { // Significant interest threshold
                 const [q, r] = posKey.split(',').map(Number);
                 const position = { q, r };
-                const distance = this.calculateDistance(anthill, position);
+                const distance = this.calculateHexDistance(anthill, position);
                 
                 highInterestAreas.push({
                     position,
@@ -718,7 +718,7 @@ class GameAnalyzer {
                         sourceInterest: area.interest
                     };
                     
-                    const targetDistance = this.calculateDistance(anthill, target);
+                    const targetDistance = this.calculateHexDistance(anthill, target);
                     if (targetDistance <= maxScoutDistance) {
                         targets.push(target);
                     }

@@ -73,7 +73,7 @@ class ResourceManager {
         prioritizedResources.forEach((resourceInfo, index) => {
             logger.debug(`Processing resource ${index + 1}/${prioritizedResources.length}: ${this.foodTypeNames[resourceInfo.resource.type]} at (${resourceInfo.resource.q}, ${resourceInfo.resource.r})`);
             
-            const bestUnit = this.findBestUnitForResource(resourceInfo.resource, availableUnits, analysis);
+            const bestUnit = this.findBestUnitForResource(resourceInfo.resource, availableUnits, analysis, strategy);
             
             if (bestUnit) {
                 logger.debug(`Found best unit ${bestUnit.id} (${this.unitTypeNames[bestUnit.type]}) for resource`);
@@ -364,8 +364,11 @@ class ResourceManager {
      * @param {Object} analysis - Анализ состояния игры
      * @returns {number} Оценка пригодности юнита
      */
-    calculateUnitResourceScore(unit, resource, analysis) {
+    calculateUnitResourceScore(unit, resource, analysis, strategy = null) {
         let score = 0;
+        
+        // RECOVERY MODE: Check recovery mode first
+        const isRecoveryMode = strategy?.recoveryMode || false;
         
         // CRITICAL FIX: Soldiers should not collect resources
         if (unit.type === this.unitTypes.SOLDIER) {
@@ -373,22 +376,47 @@ class ResourceManager {
             return -1000; // Heavily penalize soldiers for resource collection
         }
         
+        const unitTypeName = this.unitTypeNames[unit.type];
+        
+        // RECOVERY MODE: Only workers collect in recovery mode
+        if (isRecoveryMode && strategy?.allowedCollectors) {
+            if (!strategy.allowedCollectors.includes(unitTypeName)) {
+                logger.debug(`Recovery mode: unit type ${unitTypeName} not allowed to collect resources`);
+                return -1500; // Reject non-worker units in recovery mode
+            }
+        }
+        
         const efficiency = this.collectionEfficiency[resource.type]?.[unit.type] || 0.5;
         score += efficiency * 10;
         
         const distance = this.calculateDistance(unit, resource);
+        
+        // RECOVERY MODE: Apply distance limitations
+        if (isRecoveryMode && strategy?.maxCollectionDistance) {
+            if (distance > strategy.maxCollectionDistance) {
+                logger.debug(`Recovery mode: resource at distance ${distance} exceeds max collection distance ${strategy.maxCollectionDistance}`);
+                return -2000; // Reject resources that are too far in recovery mode
+            }
+        }
+        
         const distanceScore = Math.max(0, 10 - distance);
         score += distanceScore;
-        
-        const unitTypeName = this.unitTypeNames[unit.type];
         const cargo = this.getUnitCargoCapacity(unitTypeName);
         const cargoScore = cargo * 0.5;
         score += cargoScore;
         
         const safety = this.calculateUnitSafety(unit, resource, analysis);
-        score *= safety;
         
-        logger.debug(`Unit ${unit.id} (${unitTypeName}) score for ${this.foodTypeNames[resource.type]}: efficiency=${efficiency*10}, distance=${distanceScore}, cargo=${cargoScore}, safety=${safety}, final=${score}`);
+        // RECOVERY MODE: Be less strict about safety calculations
+        let adjustedSafety = safety;
+        if (isRecoveryMode && safety < 0.3) {
+            adjustedSafety = Math.max(0.3, safety * 2); // Relax safety requirements in recovery mode
+            logger.debug(`Recovery mode: adjusted safety from ${safety} to ${adjustedSafety}`);
+        }
+        
+        score *= adjustedSafety;
+        
+        logger.debug(`Unit ${unit.id} (${unitTypeName}) score for ${this.foodTypeNames[resource.type]}: efficiency=${efficiency*10}, distance=${distanceScore}, cargo=${cargoScore}, safety=${safety}${isRecoveryMode ? ` (adjusted: ${adjustedSafety})` : ''}, final=${score}`);
         
         return score;
     }
@@ -972,7 +1000,7 @@ class ResourceManager {
      * @param {Object} analysis - Анализ состояния игры
      * @returns {Object|null} Лучший юнит или null
      */
-    findBestUnitForResource(resource, availableUnits, analysis) {
+    findBestUnitForResource(resource, availableUnits, analysis, strategy = null) {
         if (availableUnits.length === 0) {
             logger.debug('No available units to assign to resource');
             return null;
@@ -982,7 +1010,7 @@ class ResourceManager {
         let bestScore = -1;
         
         availableUnits.forEach(unit => {
-            const score = this.calculateUnitResourceScore(unit, resource, analysis);
+            const score = this.calculateUnitResourceScore(unit, resource, analysis, strategy);
             logger.debug(`Unit ${unit.id} (${this.unitTypeNames[unit.type]}) score: ${score}`);
             if (score > bestScore) {
                 bestScore = score;
