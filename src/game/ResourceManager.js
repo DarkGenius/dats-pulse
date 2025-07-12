@@ -70,10 +70,13 @@ class ResourceManager {
         const prioritizedResources = this.prioritizeAvailableResources(availableResources, analysis, strategy);
         
         // Назначаем юнитов на ресурсы через систему резервирования
-        prioritizedResources.forEach(resourceInfo => {
+        prioritizedResources.forEach((resourceInfo, index) => {
+            logger.debug(`Processing resource ${index + 1}/${prioritizedResources.length}: ${this.foodTypeNames[resourceInfo.resource.type]} at (${resourceInfo.resource.q}, ${resourceInfo.resource.r})`);
+            
             const bestUnit = this.findBestUnitForResource(resourceInfo.resource, availableUnits, analysis);
             
             if (bestUnit) {
+                logger.debug(`Found best unit ${bestUnit.id} (${this.unitTypeNames[bestUnit.type]}) for resource`);
                 const priority = this.calculateReservationPriority(bestUnit, resourceInfo.resource, analysis, strategy);
                 
                 // Пытаемся зарезервировать ресурс
@@ -111,6 +114,8 @@ class ResourceManager {
                 } else {
                     logger.warn(`❌ Failed to reserve resource for unit ${bestUnit.id}: resource at (${resourceInfo.resource.q}, ${resourceInfo.resource.r}) could not be reserved`);
                 }
+            } else {
+                logger.warn(`❌ No suitable unit found for ${this.foodTypeNames[resourceInfo.resource.type]} at (${resourceInfo.resource.q}, ${resourceInfo.resource.r})`);
             }
         });
         
@@ -364,6 +369,7 @@ class ResourceManager {
         
         // CRITICAL FIX: Soldiers should not collect resources
         if (unit.type === this.unitTypes.SOLDIER) {
+            logger.debug(`Unit ${unit.id}: soldier penalty (-1000)`);
             return -1000; // Heavily penalize soldiers for resource collection
         }
         
@@ -371,14 +377,18 @@ class ResourceManager {
         score += efficiency * 10;
         
         const distance = this.calculateDistance(unit, resource);
-        score += Math.max(0, 10 - distance);
+        const distanceScore = Math.max(0, 10 - distance);
+        score += distanceScore;
         
         const unitTypeName = this.unitTypeNames[unit.type];
         const cargo = this.getUnitCargoCapacity(unitTypeName);
-        score += cargo * 0.5;
+        const cargoScore = cargo * 0.5;
+        score += cargoScore;
         
         const safety = this.calculateUnitSafety(unit, resource, analysis);
         score *= safety;
+        
+        logger.debug(`Unit ${unit.id} (${unitTypeName}) score for ${this.foodTypeNames[resource.type]}: efficiency=${efficiency*10}, distance=${distanceScore}, cargo=${cargoScore}, safety=${safety}, final=${score}`);
         
         return score;
     }
@@ -405,6 +415,11 @@ class ResourceManager {
      * @returns {number} Коэффициент безопасности маршрута
      */
     calculateUnitSafety(unit, resource, analysis) {
+        // TEMPORARY FIX: Return 1.0 (safe) to test if safety calculation is blocking assignments
+        // TODO: Fix safety calculation properly
+        return 1.0;
+        
+        /* Original implementation that may be too restrictive:
         const threats = analysis.threats.threats;
         const path = this.estimatePath(unit, resource);
         
@@ -421,6 +436,7 @@ class ResourceManager {
         });
         
         return safety;
+        */
     }
 
     /**

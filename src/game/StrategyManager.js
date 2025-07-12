@@ -28,7 +28,7 @@ class StrategyManager {
             details: `Turn ${turnNumber}, determining ${phase} phase strategy`
         });
 
-        logger.debug(`Strategy for turn ${turnNumber} (${phase} phase):`, strategy);
+        logger.debug(`Strategy for turn ${turnNumber} (${phase} phase):`); //, strategy);
         return strategy;
     }
     
