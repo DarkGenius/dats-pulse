@@ -127,16 +127,17 @@ flowchart TD
     A[Unit Manager Input] --> B[Get Available Units]
     B --> C[For Each Unit]
     
-    C --> D{Unit Has Assignment?}
-    D -->|Yes| E{Assignment Still Valid?}
-    E -->|Yes| F[Continue Assignment]
-    E -->|No| G[Clear Assignment]
+    C --> D{Central Assignment?}
+    D -->|Yes| E[Execute Resource Assignment]
+    D -->|No| F{Can Collect Resources?}
     
-    D -->|No| G
-    F --> H[Calculate Movement]
-    G --> I[LEVEL 1: Critical Priorities]
+    F -->|Yes| G[Wait for Central Assignment]
+    F -->|No| H[LEVEL 1: Critical Priorities]
     
-    I --> J{Should Return to Anthill?}
+    E --> I[Calculate Movement]
+    G --> I
+    H --> J{Should Return to Anthill?}
+    I --> MM[Return Movement Command]
     J -->|Cargo ≥80% OR has nectar| K[CRITICAL: Return to Anthill]
     J -->|No| L{End Game Restriction?}
     
@@ -175,34 +176,80 @@ flowchart TD
     DD -->|No| HH[LEVEL 5: Unit Specialization]
     
     HH --> II{Unit Type?}
-    II -->|Scout| JJ[1. Find Enemy Anthill<br/>2. Aggressive Exploration<br/>3. Bread Collection]
-    II -->|Soldier| KK[1. Hunt Enemies<br/>2. Combat<br/>3. Bread Collection<br/>4. Territory Defense]
-    II -->|Worker| LL[1. Bread Collection<br/>2. Apple Collection<br/>3. Assist Raid]
+    II -->|Scout| JJ[1. Find Enemy Anthill<br/>2. Aggressive Exploration]
+    II -->|Soldier| KK[1. Hunt Enemies<br/>2. Combat<br/>3. Territory Defense]
+    II -->|Worker| LL[1. Assist Raid<br/>2. Construction]
     
-    K --> H
-    R --> H
-    T --> H
-    AA --> H
-    FF --> H
-    GG --> H
-    JJ --> H
-    KK --> H
-    LL --> H
-    
-    H --> MM[Return Movement Command]
+    K --> I
+    R --> I
+    T --> I
+    AA --> I
+    FF --> I
+    GG --> I
+    JJ --> I
+    KK --> I
+    LL --> I
 ```
 
-## Resource Management Flow
+## Centralized Resource Assignment System (MANDATORY)
 
 ```mermaid
 flowchart TD
-    A[Resource Manager Input] --> B[Get Available Units]
-    B --> C[Prioritize Resources]
+    A[ResourceAssignmentManager<br/>ЕДИНСТВЕННАЯ система управления] --> B[Unit Requests Resource]
+    B --> C{Resource Already Reserved?}
+    
+    C -->|No| D[Create New Reservation]
+    C -->|Yes| E{Priority Check}
+    
+    E --> F{New Priority > Existing?}
+    F -->|Yes| G[Release Old Assignment]
+    F -->|No| H[Reject: Lower Priority]
+    
+    G --> I[Notify Old Unit]
+    I --> D
+    
+    D --> J[Store Reservation with timestamp]
+    J --> K[Update Unit Assignment Map]
+    K --> L[Success: Resource Reserved]
+    
+    L --> M[GameBot Turn Update]
+    M --> N[Check All Assignments]
+    
+    N --> O{Unit Still Alive?}
+    O -->|No| P[Release Assignment]
+    O -->|Yes| Q{Resource Still Exists?}
+    
+    Q -->|No| P
+    Q -->|Yes| R{Assignment Timeout?}
+    
+    R -->|Yes: >10 min| P
+    R -->|No| S[Keep Assignment]
+    
+    P --> T[Free Resource for Others]
+    T --> U[Try Reassign to Waiting Units]
+    
+    U --> V[Calculate Priorities for Available Units]
+    V --> W[Assign to Highest Priority Unit]
+    
+    H --> X[Unit Waits for Assignment]
+    S --> Y[Continue Collection]
+    W --> Y
+    X --> Y
+    
+    style A fill:#ff9999,stroke:#333,stroke-width:4px
+```
+
+## Resource Management Flow with Reservation System
+
+```mermaid
+flowchart TD
+    A[Resource Manager Input] --> B[Get Available Units without assignments]
+    B --> C[Get Unreserved Resources]
     
     C --> D[Calculate Resource Priority]
     D --> E{Resource Type?}
-    E -->|Nectar| F[Base Priority × 3.0, Distance ≤ 6: × 2.0]
-    E -->|Bread| G[Base Priority × 2.0, Distance ≤ 4: × 1.5] 
+    E -->|Nectar| F[Base Priority × 5.0, Distance ≤ 6: × 3.0]
+    E -->|Bread| G[Base Priority × 2.5, Distance ≤ 4: × 1.8] 
     E -->|Apple| H[Base Priority × 1.0]
     
     F --> I[Apply Phase Modifiers]
@@ -210,9 +257,9 @@ flowchart TD
     H --> I
     
     I --> J{Game Phase?}
-    J -->|Early| K[Bread Priority × 1.5]
-    J -->|Mid| L[Nectar Priority × 1.3]
-    J -->|Late| M[Nectar Priority × 1.8]
+    J -->|Early| K[Bread Priority × 1.5, Nectar × 1.5]
+    J -->|Mid| L[Nectar Priority × 2.0]
+    J -->|Late| M[Nectar Priority × 2.5]
     
     K --> N[Calculate Safety Factor]
     L --> N
@@ -222,25 +269,27 @@ flowchart TD
     O --> P[Final Priority Score]
     
     P --> Q[Sort Resources by Priority]
-    Q --> R[Assign Best Units to Resources]
+    Q --> R[For Each Resource: Find Best Unit]
     
-    R --> S[For Each Resource Assignment]
-    S --> T[Select Optimal Unit Count]
-    T --> U{Resource Type?}
-    U -->|Nectar| V[Max 2 Units]
-    U -->|Bread| W[Max 3 Units]
-    U -->|Apple| X[Max 4 Units]
+    R --> S[Calculate Unit-Resource Score]
+    S --> T{Unit Cargo Compatible?}
+    T -->|Same Type| U[Priority × 1.5 bonus]
+    T -->|Different Type| V[Priority × 0.3 penalty]
+    T -->|Empty| W[Normal Priority]
     
-    V --> Y[Calculate Collection Strategy]
-    W --> Y
-    X --> Y
+    U --> X[Attempt Resource Reservation]
+    V --> X
+    W --> X
     
-    Y --> Z{Distance > 8 OR Threats?}
-    Z -->|Yes| AA[Convoy Formation with Escort Protection]
-    Z -->|No| BB[Standard Collection]
+    X --> Y{Reservation Success?}
+    Y -->|Yes| Z[Create Gather Action]
+    Y -->|No| AA[Try Next Resource]
     
-    AA --> CC[Return Assignment]
-    BB --> CC
+    Z --> BB[Log Assignment Success]
+    AA --> CC[Log Reservation Conflict]
+    
+    BB --> DD[Return Actions]
+    CC --> DD
 ```
 
 ## Cargo Management and Resource Logistics
@@ -542,6 +591,8 @@ The enhanced decision-making system operates with the following characteristics:
 - **End-Game Calculations**: O(n) where n = number of units (distance calculations)
 - **Resource Compatibility**: O(1) per resource type check
 - **Safe Resource Search**: O(r×t) where r = resources, t = threats (safety validation)
+- **Resource Assignment Manager**: O(1) for reservation checks, O(u) for cleanup where u = dead units
+- **Centralized Reservations**: O(r) space for resource reservations, O(1) priority comparisons
 
 ### Combat Systems  
 - **Formation Planning**: O(u) where u = combat units

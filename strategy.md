@@ -76,6 +76,29 @@
 
 ## Интеллектуальное управление ресурсами
 
+### Централизованная система назначения ресурсов (ОБЯЗАТЕЛЬНАЯ)
+
+**ResourceAssignmentManager - единственная система управления ресурсами:**
+- **Обязательное использование:** Централизованная система теперь является единственным способом назначения юнитов на ресурсы
+- **Единственность назначения:** Только один юнит на один ресурс в любой момент времени
+- **Приоритетная система:** Более важные задачи могут вытеснять менее важные
+- **Автоматическая очистка:** При смерти юнита или исчезновении ресурса
+- **Тайм-ауты:** Устаревшие назначения автоматически удаляются
+- **Никаких прямых назначений:** Юниты НЕ получают прямые задачи nectar_collection, bread_collection, apple_collection
+
+**Алгоритм резервирования:**
+```javascript
+function reserveResource(unitId, resource, priority) {
+    const existingReservation = resourceReservations.get(resourceKey);
+    if (existingReservation && priority > existingReservation.priority) {
+        // Вытесняем менее приоритетное назначение
+        releaseUnitAssignment(existingReservation.unitId);
+    }
+    // Создаем новое резервирование
+    resourceReservations.set(resourceKey, { unitId, priority, assignedAt: Date.now() });
+}
+```
+
 ### Строгое соблюдение игровых правил
 
 **Правило совместимости типов ресурсов:**
@@ -178,10 +201,9 @@ function getTaskPriority(unit, analysis, strategy) {
         return nearbyTasks.length > 0 ? nearbyTasks : ['return_to_anthill'];
     }
     
-    // 3. АБСОЛЮТНЫЙ: Нектар превыше всего
-    if (nectarAvailable && unitCanCollectNectar) {
-        return ['nectar_collection'];
-    }
+    // 3. ЦЕНТРАЛИЗОВАННАЯ СИСТЕМА: Ресурсы управляются через ResourceAssignmentManager
+    // Юниты НЕ получают прямые задачи на сбор ресурсов
+    // ResourceManager назначает юнитов через центральную систему резервирования
     
     // 4. АДАПТИВНЫЙ: Управление грузом
     if (shouldAvoidDistractions(unit, analysis)) {
@@ -198,9 +220,9 @@ function getTaskPriority(unit, analysis, strategy) {
     }
     
     // 6. СПЕЦИАЛИЗАЦИЯ: По типу юнита
-    // Scout: поиск врагов, разведка, нектар
-    // Soldier: бой, рейды, защита, ресурсы
-    // Worker: ресурсы, строительство, поддержка
+    // Scout: поиск врагов, разведка
+    // Soldier: бой, рейды, защита
+    // Worker: поддержка, строительство
 }
 ```
 

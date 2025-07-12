@@ -35,7 +35,7 @@ class UnitManager {
      * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object} Объект с массивом команд движения
      */
-    planUnitActions(analysis, strategy, resourceAssignmentManager = null) {
+    planUnitActions(analysis, strategy, resourceAssignmentManager) {
         const moves = [];
         const myUnits = analysis.units.myUnits;
         
@@ -60,13 +60,18 @@ class UnitManager {
      * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object|null} Команда движения или null
      */
-    planUnitAction(unit, analysis, strategy, resourceAssignmentManager = null) {
-        // Проверяем, есть ли уже назначение из центрального менеджера
-        if (resourceAssignmentManager) {
-            const centralAssignment = resourceAssignmentManager.getUnitAssignment(unit.id);
-            if (centralAssignment) {
-                return this.executeResourceAssignment(unit, centralAssignment, analysis);
-            }
+    planUnitAction(unit, analysis, strategy, resourceAssignmentManager) {
+        // ПРИОРИТЕТ 1: Проверяем, есть ли уже назначение из центрального менеджера
+        const centralAssignment = resourceAssignmentManager.getUnitAssignment(unit.id);
+        if (centralAssignment) {
+            return this.executeResourceAssignment(unit, centralAssignment, analysis);
+        }
+        
+        // Если юнит может собирать ресурсы, но не имеет назначения,
+        // он ждет назначения от ResourceManager
+        if (this.canCollectResources(unit) && this.hasAvailableResources(analysis)) {
+            logger.debug(`Unit ${unit.id} waiting for resource assignment from central manager`);
+            return this.defaultBehavior(unit, analysis);
         }
         
         const existingAssignment = this.unitAssignments.get(unit.id);
@@ -155,8 +160,8 @@ class UnitManager {
      * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object|null} Команда движения или null
      */
-    assignNewTask(unit, analysis, strategy, resourceAssignmentManager = null) {
-        const taskPriority = this.getTaskPriority(unit, analysis, strategy);
+    assignNewTask(unit, analysis, strategy, resourceAssignmentManager) {
+        const taskPriority = this.getTaskPriority(unit, analysis, strategy, resourceAssignmentManager);
         
         for (const task of taskPriority) {
             const action = this.executeTask(unit, task, analysis, strategy, resourceAssignmentManager);
@@ -173,9 +178,10 @@ class UnitManager {
      * @param {Object} unit - Юнит
      * @param {Object} analysis - Анализ состояния игры
      * @param {Object} strategy - Стратегия
+     * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Array} Массив задач в порядке приоритета
      */
-    getTaskPriority(unit, analysis, strategy) {
+    getTaskPriority(unit, analysis, strategy, resourceAssignmentManager) {
         const tasks = [];
         const phase = strategy.phase;
         const currentTurn = analysis.gameState?.turnNo || 0;
@@ -188,12 +194,7 @@ class UnitManager {
         
         // END-GAME HEURISTIC: If game is nearing end (turn 380+), restrict unit movement
         if (this.shouldRestrictMovementForEndGame(unit, analysis, currentTurn)) {
-            // Only allow nearby resource collection and return to anthill
-            const nearbyTasks = this.getNearbyResourceTasks(unit, analysis);
-            if (nearbyTasks.length > 0) {
-                return nearbyTasks;
-            }
-            // If no nearby resources, return to anthill area
+            // В конце игры юниты не берут новые задачи ресурсов
             tasks.push('return_to_anthill');
             return tasks;
         }
@@ -201,23 +202,14 @@ class UnitManager {
         // CARGO-AWARE PRIORITIZATION: If unit is moderately loaded (50%+), avoid distractions
         const shouldAvoidDistractions = this.shouldAvoidDistractions(unit, analysis);
         
-        // NECTAR COLLECTION: ABSOLUTE HIGHEST PRIORITY - check first before any other tasks
-        // This ensures nectar is collected immediately when available, overriding raids and defense
-        if (analysis.resources && analysis.resources.byType && analysis.resources.byType.nectar && 
-            analysis.resources.byType.nectar.length > 0) {
-            
-            // Check if unit can actually collect nectar (not carrying incompatible resource)
-            if (!unit.food || unit.food.amount === 0 || unit.food.type === this.foodTypes.NECTAR) {
-                logger.debug(`Unit ${unit.id}: Nectar available (${analysis.resources.byType.nectar.length} sources), prioritizing nectar collection over all other tasks`);
-                tasks.push('nectar_collection');
-                return tasks; // Return immediately - nectar collection is absolute priority
-            }
-        }
+        // Централизованная система назначений ресурсов управляет всеми задачами сбора
+        // Юниты НЕ получают прямые задачи nectar_collection, bread_collection, apple_collection
+        logger.debug(`Unit ${unit.id}: Resource tasks managed by central assignment system`);
         
         // If unit should avoid distractions, only allow safe resource collection
         if (shouldAvoidDistractions) {
             logger.debug(`Unit ${unit.id} avoiding distractions due to moderate cargo load, focusing on safe resource collection`);
-            const safeTasks = this.getSafeResourceTasks(unit, analysis);
+            const safeTasks = this.getSafeResourceTasks(unit, analysis, resourceAssignmentManager);
             if (safeTasks.length > 0) {
                 return safeTasks;
             }
@@ -240,14 +232,16 @@ class UnitManager {
         const unitTypeName = this.unitTypeNames[unit.type];
         
         if (unitTypeName === 'scout') {
-            // Scouts prioritize finding enemy bases and high-value resources
-            tasks.push('find_enemy_anthill', 'aggressive_exploration', 'bread_collection', 'exploration', 'resource_scouting', 'apple_collection');
+            // Scouts prioritize finding enemy bases and exploration
+            tasks.push('find_enemy_anthill', 'aggressive_exploration', 'exploration', 'resource_scouting');
+            // Централизованная система управляет всеми ресурсными задачами
         } else if (unitTypeName === 'soldier') {
-            // Soldiers can collect resources between combat
-            tasks.push('hunt_enemies', 'combat', 'bread_collection', 'aggressive_exploration', 'convoy_protection', 'territory_defense', 'apple_collection');
+            // Soldiers focus on combat
+            tasks.push('hunt_enemies', 'combat', 'aggressive_exploration', 'convoy_protection', 'territory_defense');
+            // Централизованная система управляет всеми ресурсными задачами
         } else if (unitTypeName === 'worker') {
-            // Workers are the primary resource collectors
-            tasks.push('bread_collection', 'apple_collection', 'assist_raid', 'construction');
+            // Workers focus on support tasks, central manager handles resources
+            tasks.push('assist_raid', 'construction');
         }
         
         if (phase === 'early') {
@@ -269,7 +263,7 @@ class UnitManager {
      * @param {Object} strategy - Стратегия
      * @returns {Object|null} Команда движения или null
      */
-    executeTask(unit, task, analysis, strategy, resourceAssignmentManager = null) {
+    executeTask(unit, task, analysis, strategy, resourceAssignmentManager) {
         switch (task) {
             case 'return_to_anthill':
                 return this.returnToAnthill(unit, analysis);
@@ -348,7 +342,7 @@ class UnitManager {
      * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object|null} Команда движения к нектару или null
      */
-    collectNectar(unit, analysis, resourceAssignmentManager = null) {
+    collectNectar(unit, analysis, resourceAssignmentManager) {
         // RULE CHECK: Юнит не может переносить несколько типов ресурсов одновременно
         if (unit.food && unit.food.amount > 0 && unit.food.type !== this.foodTypes.NECTAR) {
             logger.debug(`Unit ${unit.id} cannot collect nectar: already carrying ${this.foodTypeNames[unit.food.type] || unit.food.type} (${unit.food.amount} units)`);
@@ -374,10 +368,8 @@ class UnitManager {
 
         logger.debug(`Unit ${unit.id}: Found ${nectarResources.length} nectar resources available`);
 
-        // Если используется централизованная система, ищем среди доступных ресурсов
-        const availableNectar = resourceAssignmentManager ? 
-            resourceAssignmentManager.getAvailableResources(nectarResources) : 
-            nectarResources;
+        // Централизованная система управляет доступностью ресурсов
+        const availableNectar = resourceAssignmentManager.getAvailableResources(nectarResources);
 
         if (availableNectar.length === 0) {
             logger.debug(`Unit ${unit.id}: No available nectar resources (all reserved)`);
@@ -420,7 +412,7 @@ class UnitManager {
      * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object|null} Команда движения к хлебу или null
      */
-    collectBread(unit, analysis, resourceAssignmentManager = null) {
+    collectBread(unit, analysis, resourceAssignmentManager) {
         // RULE CHECK: Юнит не может переносить несколько типов ресурсов одновременно
         if (unit.food && unit.food.amount > 0 && unit.food.type !== this.foodTypes.BREAD) {
             return null; // Уже несет другой тип ресурса
@@ -431,10 +423,8 @@ class UnitManager {
             return null;
         }
 
-        // Если используется централизованная система, ищем среди доступных ресурсов
-        const availableBread = resourceAssignmentManager ? 
-            resourceAssignmentManager.getAvailableResources(breadResources) : 
-            breadResources;
+        // Централизованная система управляет доступностью ресурсов
+        const availableBread = resourceAssignmentManager.getAvailableResources(breadResources);
 
         if (availableBread.length === 0) {
             logger.debug(`Unit ${unit.id}: No available bread resources (all reserved)`);
@@ -469,7 +459,7 @@ class UnitManager {
      * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object|null} Команда движения к яблокам или null
      */
-    collectApples(unit, analysis, resourceAssignmentManager = null) {
+    collectApples(unit, analysis, resourceAssignmentManager) {
         // RULE CHECK: Юнит не может переносить несколько типов ресурсов одновременно
         if (unit.food && unit.food.amount > 0 && unit.food.type !== this.foodTypes.APPLE) {
             return null; // Уже несет другой тип ресурса
@@ -480,10 +470,8 @@ class UnitManager {
             return null;
         }
 
-        // Если используется централизованная система, ищем среди доступных ресурсов
-        const availableApples = resourceAssignmentManager ? 
-            resourceAssignmentManager.getAvailableResources(appleResources) : 
-            appleResources;
+        // Централизованная система управляет доступностью ресурсов
+        const availableApples = resourceAssignmentManager.getAvailableResources(appleResources);
 
         if (availableApples.length === 0) {
             logger.debug(`Unit ${unit.id}: No available apple resources (all reserved)`);
@@ -1265,6 +1253,37 @@ class UnitManager {
     }
 
     /**
+     * Проверяет, может ли юнит собирать ресурсы (не полностью загружен)
+     * @param {Object} unit - Юнит
+     * @returns {boolean} true, если юнит может собирать ресурсы
+     */
+    canCollectResources(unit) {
+        // Юнит должен вернуться к муравейнику, если загружен на 80%+
+        if (this.shouldReturnToAnthill(unit, { units: {} })) {
+            return false;
+        }
+        
+        // Проверяем грузоподъемность
+        const unitTypeName = this.unitTypeNames[unit.type];
+        const maxCapacity = this.getUnitCargoCapacity(unitTypeName);
+        const currentCargo = unit.food?.amount || 0;
+        
+        // Может собирать, если есть свободное место
+        return currentCargo < maxCapacity;
+    }
+    
+    /**
+     * Проверяет, есть ли доступные ресурсы для сбора
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {boolean} true, если есть видимые ресурсы
+     */
+    hasAvailableResources(analysis) {
+        return analysis.resources && 
+               analysis.resources.visible && 
+               analysis.resources.visible.length > 0;
+    }
+
+    /**
      * Вычисляет расстояние между двумя позициями в гексагональной системе координат.
      * @param {Object} pos1 - Первая позиция с координатами q, r
      * @param {Object} pos2 - Вторая позиция с координатами q, r
@@ -1844,12 +1863,19 @@ class UnitManager {
      * Получает задачи по сбору близких ресурсов для конца игры.
      * @param {Object} unit - Юнит
      * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Array} Массив задач для близких ресурсов
      */
-    getNearbyResourceTasks(unit, analysis) {
+    getNearbyResourceTasks(unit, analysis, resourceAssignmentManager = null) {
         const tasks = [];
         const anthill = analysis.units.anthill;
         if (!anthill) return tasks;
+        
+        // Если используется централизованная система, не даем прямые задачи
+        if (resourceAssignmentManager) {
+            logger.debug(`Unit ${unit.id}: Using central manager for end-game resource assignment`);
+            return tasks;
+        }
         
         const currentTurn = analysis.gameState?.turnNo || 0;
         const turnsLeft = 420 - currentTurn;
@@ -1931,12 +1957,17 @@ class UnitManager {
      * Приоритизирует близкие ресурсы и избегает опасных областей.
      * @param {Object} unit - Загруженный юнит
      * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Array} Массив безопасных задач по ресурсам
      */
-    getSafeResourceTasks(unit, analysis) {
+    getSafeResourceTasks(unit, analysis, resourceAssignmentManager) {
         const tasks = [];
         const anthill = analysis.units.anthill;
         if (!anthill) return tasks;
+        
+        // Централизованная система управляет всеми назначениями ресурсов
+        logger.debug(`Unit ${unit.id}: Using central manager for safe resource assignment`);
+        return tasks;
         
         const maxSafeDistance = 8; // Ограничиваем расстояние для безопасности
         const threats = analysis.threats.threats || [];

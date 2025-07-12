@@ -41,6 +41,7 @@ Copy `.env.example` to `.env` and configure:
 - Executes turn-based decision making
 - Manages round lifecycle and automatic registration
 - Integrates with web visualizer for real-time updates
+- **IMPORTANT**: Uses mandatory centralized ResourceAssignmentManager for all resource assignments
 
 **ApiClient** (`src/api/ApiClient.js`) - HTTP client for game API
 - Handles registration, game state retrieval, and move submission
@@ -50,8 +51,9 @@ Copy `.env.example` to `.env` and configure:
 **Game Analysis & Strategy Engine:**
 - **GameAnalyzer** - Analyzes game state and calculates metrics
 - **StrategyManager** - Implements three-phase strategy with adaptive proportions
-- **UnitManager** - Manages unit behavior and movement
-- **ResourceManager** - Handles resource collection and logistics
+- **UnitManager** - Manages unit behavior and movement (units wait for centralized assignments)
+- **ResourceManager** - Handles resource collection through centralized assignment system
+- **ResourceAssignmentManager** - Mandatory centralized system preventing resource conflicts
 - **CombatManager** - Implements combat formations and tactics
 - **RoundManager** - Handles round lifecycle, waiting for available rounds, and automatic registration
 
@@ -158,8 +160,9 @@ The bot automatically detects and manages game rounds:
 ### Game Logic Modules
 - `src/game/GameAnalyzer.js` - Game state analysis and metrics
 - `src/game/StrategyManager.js` - Three-phase strategy implementation
-- `src/game/UnitManager.js` - Unit behavior and movement
-- `src/game/ResourceManager.js` - Resource collection and logistics
+- `src/game/UnitManager.js` - Unit behavior and movement (waits for centralized assignments)
+- `src/game/ResourceManager.js` - Resource collection through centralized system
+- `src/game/ResourceAssignmentManager.js` - Mandatory centralized resource reservation system
 - `src/game/CombatManager.js` - Combat formations and tactics
 
 ### Visualization System

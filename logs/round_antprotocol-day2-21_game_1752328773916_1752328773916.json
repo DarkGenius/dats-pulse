@@ -1,0 +1,24 @@
+{
+  "roundId": "antprotocol-day2-21",
+  "gameId": "1752328773916",
+  "teamName": "Drive Core",
+  "startTime": "2025-07-12T13:59:33.916Z",
+  "endTime": "2025-07-12T13:59:34.600Z",
+  "finalScore": 0,
+  "finalPosition": null,
+  "turns": [],
+  "summary": {
+    "totalTurns": 0,
+    "peakCalories": 0,
+    "peakUnitCount": 0,
+    "resourcesCollected": {
+      "apples": 0,
+      "bread": 0,
+      "nectar": 0
+    },
+    "unitsLost": 0,
+    "enemiesDefeated": 0,
+    "movementsMade": 0,
+    "decisionsExecuted": 0
+  }
+}

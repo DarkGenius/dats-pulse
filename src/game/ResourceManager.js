@@ -24,7 +24,7 @@ class ResourceManager {
         this.foodTypeNames = FOOD_TYPE_NAMES;
         this.unitTypeNames = UNIT_TYPE_NAMES;
         
-        this.resourceAssignments = new Map();
+        // Централизованная система заменяет старые resourceAssignments
         this.collectionHistory = [];
     }
 
@@ -35,41 +35,13 @@ class ResourceManager {
      * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object} Объект с массивом действий по сбору ресурсов
      */
-    planResourceCollection(analysis, strategy, resourceAssignmentManager = null) {
-        const actions = [];
-        
-        // Если используется новая система назначений, работаем через неё
-        if (resourceAssignmentManager) {
-            return this.planResourceCollectionWithReservations(analysis, strategy, resourceAssignmentManager);
-        }
-        
-        // Старая логика для совместимости
-        const availableUnits = this.getAvailableUnits(analysis);
-        const prioritizedResources = this.prioritizeResources(analysis, strategy);
-        
-        this.updateResourceAssignments(analysis);
-        
-        prioritizedResources.forEach(resourceInfo => {
-            const assignments = this.assignUnitsToResource(
-                resourceInfo,
-                availableUnits,
-                analysis,
-                strategy
-            );
-            
-            if (assignments && assignments.length > 0) {
-                actions.push(...assignments);
-            }
-        });
-        
-        const logisticsActions = this.planLogistics(analysis, strategy);
-        actions.push(...logisticsActions);
-        
-        return { actions };
+    planResourceCollection(analysis, strategy, resourceAssignmentManager) {
+        return this.planResourceCollectionWithReservations(analysis, strategy, resourceAssignmentManager);
     }
 
     /**
      * Планирует сбор ресурсов с использованием централизованной системы резервирования.
+     * @private
      * @param {Object} analysis - Анализ состояния игры
      * @param {Object} strategy - Стратегия игры
      * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
@@ -299,14 +271,18 @@ class ResourceManager {
      * @returns {number} Максимальная эффективность среди доступных юнитов
      */
     calculateCollectionEfficiency(resource, analysis) {
-        const availableUnits = this.getAvailableUnits(analysis);
-        const unitTypes = availableUnits.map(unit => unit.type);
+        // Централизованная система использует этот метод для оценки эффективности
+        // Оцениваем эффективность на основе типа ресурса
+        const resourceType = resource.type;
         
-        const efficiencies = unitTypes.map(type => 
-            this.collectionEfficiency[resource.type]?.[type] || 0.5
-        );
+        // Максимальная эффективность для каждого типа ресурса
+        const maxEfficiencies = {
+            [this.foodTypes.NECTAR]: 1.0,  // Скауты наиболее эффективны
+            [this.foodTypes.BREAD]: 0.8,   // Рабочие хороши
+            [this.foodTypes.APPLE]: 0.8    // Рабочие хороши
+        };
         
-        return efficiencies.length > 0 ? Math.max(...efficiencies) : 0.5;
+        return maxEfficiencies[resourceType] || 0.5;
     }
 
     /**

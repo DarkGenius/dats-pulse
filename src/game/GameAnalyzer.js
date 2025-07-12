@@ -126,17 +126,27 @@ class GameAnalyzer {
      */
     analyzeResources(gameState) {
         const resources = gameState.food || [];
+        const anthill = this.findAnthill(gameState);
+        
+        // CRITICAL FIX: Exclude any resources that are at the anthill location
+        const validResources = anthill ? 
+            resources.filter(r => r.q !== anthill.q || r.r !== anthill.r) : 
+            resources;
+        
+        if (resources.length !== validResources.length) {
+            logger.warn(`Excluded ${resources.length - validResources.length} resources at anthill location (${anthill?.q}, ${anthill?.r})`);
+        }
         
         const resourcesByType = {
-            nectar: resources.filter(r => r.type === this.foodTypes.NECTAR),
-            bread: resources.filter(r => r.type === this.foodTypes.BREAD),
-            apple: resources.filter(r => r.type === this.foodTypes.APPLE)
+            nectar: validResources.filter(r => r.type === this.foodTypes.NECTAR),
+            bread: validResources.filter(r => r.type === this.foodTypes.BREAD),
+            apple: validResources.filter(r => r.type === this.foodTypes.APPLE)
         };
 
         const resourceDistances = this.calculateResourceDistances(resourcesByType, gameState);
         
         return {
-            visible: resources,
+            visible: validResources,
             byType: resourcesByType,
             distances: resourceDistances,
             highValue: this.identifyHighValueResources(resourcesByType, resourceDistances)
