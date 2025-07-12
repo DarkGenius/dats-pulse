@@ -47,20 +47,42 @@ class GameAnalyzer {
     }
 
     /**
-     * Определяет текущую фазу игры на основе номера хода.
+     * Определяет текущую фазу игры на основе событий и состояния игры.
      * @param {Object} gameState - Состояние игры
-     * @returns {string} Фаза игры: 'early' (1-20), 'mid' (21-50), 'late' (51+)
+     * @returns {string} Фаза игры: 'early', 'mid', 'late'
      */
     determineGamePhase(gameState) {
         const turn = gameState.turnNo || 0;
+        const myUnits = (gameState.ants || []).filter(unit => unit.type !== 0);
+        const enemyUnits = (gameState.enemies || []).filter(unit => unit.type !== 0);
+        const discoveredEnemyAnthills = gameState.discoveredEnemyAnthills || [];
         
-        if (turn <= 20) {
-            return 'early';
-        } else if (turn <= 50) {
-            return 'mid';
-        } else {
-            return 'late';
+        // Event-based phase determination
+        
+        // Late game triggers
+        if (turn > 300) {
+            return 'late'; // Always late game after turn 300
         }
+        if (discoveredEnemyAnthills.length > 0 && myUnits.length >= 10) {
+            return 'late'; // Found enemy base and have army - time to attack
+        }
+        if (enemyUnits.length > 5 && turn > 30) {
+            return 'late'; // Many enemies spotted - escalate to war
+        }
+        
+        // Mid game triggers
+        if (turn > 50) {
+            return 'mid'; // Default mid game after turn 50
+        }
+        if (myUnits.length >= 8) {
+            return 'mid'; // Have decent army - time to expand aggressively
+        }
+        if (enemyUnits.length > 0 && turn > 15) {
+            return 'mid'; // Enemy contact made - increase readiness
+        }
+        
+        // Early game (default)
+        return 'early';
     }
 
     /**
