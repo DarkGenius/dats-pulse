@@ -5,6 +5,7 @@ class GameVisualizer {
         this.statsUpdater = new StatsUpdater();
         this.websocket = null;
         this.isConnected = false;
+        this.isInitialLoad = true;
         
         this.connectionIndicator = document.getElementById('connection-indicator');
         
@@ -53,7 +54,7 @@ class GameVisualizer {
         try {
             // Пытаемся подключиться к WebSocket серверу
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${location.hostname}:${location.port || 3001}/ws`;
+            const wsUrl = `${protocol}//${location.host}/`;
             
             this.websocket = new WebSocket(wsUrl);
             
@@ -93,10 +94,12 @@ class GameVisualizer {
     handleWebSocketMessage(data) {
         switch (data.type) {
             case 'gameState':
-                this.updateGameState(data.gameState, data.analysis, data.strategy);
-                break;
             case 'gameUpdate':
                 this.updateGameState(data.gameState, data.analysis, data.strategy);
+                if (this.isInitialLoad && data.gameState) {
+                    this.centerOnHome(data.gameState);
+                    this.isInitialLoad = false;
+                }
                 break;
             case 'roundStatus':
                 this.updateRoundStatus(data);
@@ -119,6 +122,14 @@ class GameVisualizer {
         
         // Скрываем оверлей ожидания, если игра началась
         this.hideWaitingOverlay();
+    }
+
+    centerOnHome(gameState) {
+        if (gameState.home && Array.isArray(gameState.home) && gameState.home.length > 0) {
+            const home = gameState.home[0];
+            this.renderer.hexGrid.centerOn(home.q, home.r);
+            this.renderer.render();
+        }
     }
     
     updateRoundStatus(data) {

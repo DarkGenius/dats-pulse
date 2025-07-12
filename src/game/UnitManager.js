@@ -670,7 +670,14 @@ class UnitManager {
         }
 
         const targets = [];
-        const vision = this.unitStats[unit.type].vision;
+        const unitStats = this.unitStats[unit.type];
+        
+        if (!unitStats) {
+            logger.warn(`Unknown unit type ${unit.type} for unit ${unit.id}, skipping exploration`);
+            return [];
+        }
+        
+        const vision = unitStats.vision;
         
         for (let radius = vision; radius <= vision * 3; radius += vision) {
             const ringTargets = this.generateRingPositions(anthill, radius);
@@ -949,7 +956,12 @@ class UnitManager {
      * @returns {boolean} true, если юнит может эффективно бороться с угрозой
      */
     canEngageThreat(unit, threat, analysis) {
-        const unitStrength = this.unitStats[unit.type].attack;
+        const unitStats = this.unitStats[unit.type];
+        if (!unitStats) {
+            logger.warn(`Unknown unit type ${unit.type} for unit ${unit.id}, using default attack`);
+            return 10; // Default attack value
+        }
+        const unitStrength = unitStats.attack;
         const threatStrength = this.unitStats[threat.unit.type]?.attack || 50;
         
         return unitStrength >= threatStrength * 0.7;

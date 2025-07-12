@@ -67,8 +67,9 @@ class GameRenderer {
         });
         
         document.getElementById('centerView').addEventListener('click', () => {
-            if (this.gameState && this.gameState.home) {
-                this.hexGrid.centerOn(this.gameState.home.q, this.gameState.home.r);
+            if (this.gameState && this.gameState.home && Array.isArray(this.gameState.home) && this.gameState.home.length > 0) {
+                const home = this.gameState.home[0];
+                this.hexGrid.centerOn(home.q, home.r);
                 this.render();
             }
         });
@@ -86,6 +87,14 @@ class GameRenderer {
     }
     
     updateGameState(gameState, analysis) {
+        console.log('GameRenderer: Received game state update', {
+            turn: gameState?.turnNo,
+            ants: gameState?.ants?.length || 0,
+            enemies: gameState?.enemies?.length || 0,
+            food: gameState?.food?.length || 0,
+            home: gameState?.home
+        });
+        
         this.gameState = gameState;
         this.analysis = analysis;
         
@@ -194,17 +203,17 @@ class GameRenderer {
     }
     
     drawAnthill() {
-        if (!this.gameState.home) return;
-        
-        const home = this.gameState.home;
-        
+        if (!this.gameState.home || !Array.isArray(this.gameState.home) || this.gameState.home.length === 0) return;
+
+        const home = this.gameState.home[0];
+
         // Рисуем основание муравейника
         this.hexGrid.drawHex(home.q, home.r, {
             fill: this.colors.anthill,
             stroke: '#ffffff',
             strokeWidth: 3
         });
-        
+
         // Рисуем символ дома
         this.hexGrid.drawText(home.q, home.r, '🏠', {
             font: `${16 * this.hexGrid.zoom}px Arial`

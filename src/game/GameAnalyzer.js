@@ -69,8 +69,9 @@ class GameAnalyzer {
      * @returns {Object} Анализ юнитов с подсчетом, пропорциями и местоположением муравейника
      */
     analyzeUnits(gameState) {
-        const myUnits = gameState.ants || [];
-        const enemyUnits = gameState.enemies || [];
+        // Фильтруем муравейники (type: 0) из обычных юнитов
+        const myUnits = (gameState.ants || []).filter(unit => unit.type !== 0);
+        const enemyUnits = (gameState.enemies || []).filter(unit => unit.type !== 0);
 
         const unitCounts = {
             worker: 0,
@@ -109,12 +110,13 @@ class GameAnalyzer {
      * @returns {Object|null} Координаты муравейника {q, r} или null если не найден
      */
     findAnthill(gameState) {
-        if (!gameState.home) return null;
+        // Ищем муравейник в home (массиве координат)
+        if (gameState.home && Array.isArray(gameState.home) && gameState.home.length > 0) {
+            const homePos = gameState.home[0];
+            return { q: homePos.q, r: homePos.r };
+        }
         
-        return {
-            q: gameState.home.q,
-            r: gameState.home.r
-        };
+        return null;
     }
 
     /**
@@ -194,8 +196,9 @@ class GameAnalyzer {
      * @returns {Object} Анализ угроз с уровнями опасности и классификацией по расстоянию
      */
     analyzeThreats(gameState) {
-        const myUnits = gameState.units ? gameState.units.filter(unit => unit.player_id === gameState.player_id) : [];
-        const enemyUnits = gameState.units ? gameState.units.filter(unit => unit.player_id !== gameState.player_id) : [];
+        // Фильтруем муравейники (type: 0) из обычных юнитов
+        const myUnits = (gameState.ants || []).filter(unit => unit.type !== 0);
+        const enemyUnits = (gameState.enemies || []).filter(unit => unit.type !== 0);
         const anthill = this.findAnthill(gameState);
 
         const threats = enemyUnits.map(enemy => {
@@ -271,8 +274,9 @@ class GameAnalyzer {
      * @returns {Object} Анализ территории с контролируемой областью, спорными зонами и возможностями расширения
      */
     analyzeTerritory(gameState) {
-        const myUnits = gameState.units ? gameState.units.filter(unit => unit.player_id === gameState.player_id) : [];
-        const enemyUnits = gameState.units ? gameState.units.filter(unit => unit.player_id !== gameState.player_id) : [];
+        // Фильтруем муравейники (type: 0) из обычных юнитов
+        const myUnits = (gameState.ants || []).filter(unit => unit.type !== 0);
+        const enemyUnits = (gameState.enemies || []).filter(unit => unit.type !== 0);
         
         const controlledArea = this.calculateControlledArea(myUnits);
         const contested = this.findContestedAreas(myUnits, enemyUnits);
@@ -356,7 +360,7 @@ class GameAnalyzer {
      * @returns {Array} Список возможностей расширения, отсортированный по эффективности
      */
     identifyExpansionOpportunities(myUnits, gameState) {
-        const resources = gameState.resources || [];
+        const resources = gameState.food || [];
         const opportunities = [];
         
         resources.forEach(resource => {

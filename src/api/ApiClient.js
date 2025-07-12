@@ -24,23 +24,50 @@ class ApiClient {
   }
 
   async register(teamName) {
-    const data = { team_name: teamName };
-    return await this.makeRequest("POST", "/register", data);
+    // Регистрация происходит только через токен авторизации без тела запроса
+    logger.debug(`API: Registering team via /register endpoint (token-based)`);
+    return await this.makeRequest("POST", "/register");
   }
 
   async getGameState() {
-    return await this.makeRequest("GET", "/arena");
+    logger.debug("API: Requesting game state from /arena");
+    const gameState = await this.makeRequest("GET", "/arena");
+    if (gameState) {
+      logger.debug(`API: Received game state - Turn: ${gameState.turnNo || 'unknown'}, Units: ${gameState.ants?.length || 0}, Resources: ${gameState.food?.length || 0}`);
+    } else {
+      logger.warn("API: Received empty game state");
+    }
+    return gameState;
   }
 
   async sendMoves(moves) {
-    // Moves должны быть массивом объектов с полями antId, q, r
+    // Формат по API спецификации: 
+    // {
+    //   "moves": [
+    //     {
+    //       "ant": "uuid",
+    //       "path": [{"q": 10, "r": 20}]
+    //     }
+    //   ]
+    // }
     const moveCommands = moves.map(move => ({
-      antId: move.unit_id || move.antId,
-      q: move.move?.q || move.q,
-      r: move.move?.r || move.r
+      ant: move.unit_id || move.antId,
+      path: [{
+        q: move.move?.q || move.q,
+        r: move.move?.r || move.r
+      }]
     }));
     
-    return await this.makeRequest("POST", "/move", moveCommands);
+    const payload = {
+      moves: moveCommands
+    };
+    
+    logger.debug(`API: Sending ${moveCommands.length} moves to /move`);
+    logger.debug("API: Move payload:", JSON.stringify(payload, null, 2));
+    
+    const response = await this.makeRequest("POST", "/move", payload);
+    logger.debug("API: Move response:", response);
+    return response;
   }
 
   async getLogs() {

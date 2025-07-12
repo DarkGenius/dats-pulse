@@ -1,12 +1,14 @@
-// Типы еды
+// Типы еды (согласно OpenAPI спецификации)
 const FOOD_TYPES = {
+    NONE: 0,     // Нет еды
     APPLE: 1,
     BREAD: 2,
     NECTAR: 3
 };
 
-// Типы юнитов
+// Типы юнитов (согласно OpenAPI спецификации)
 const UNIT_TYPES = {
+    ANTHILL: 0,  // Муравейник (специальный случай)
     WORKER: 1,
     SOLDIER: 2,
     SCOUT: 3
@@ -14,12 +16,14 @@ const UNIT_TYPES = {
 
 // Обратное отображение для читаемости
 const FOOD_TYPE_NAMES = {
+    [FOOD_TYPES.NONE]: 'none',
     [FOOD_TYPES.APPLE]: 'apple',
     [FOOD_TYPES.BREAD]: 'bread',
     [FOOD_TYPES.NECTAR]: 'nectar'
 };
 
 const UNIT_TYPE_NAMES = {
+    [UNIT_TYPES.ANTHILL]: 'anthill',
     [UNIT_TYPES.WORKER]: 'worker',
     [UNIT_TYPES.SOLDIER]: 'soldier',
     [UNIT_TYPES.SCOUT]: 'scout'
@@ -27,6 +31,7 @@ const UNIT_TYPE_NAMES = {
 
 // Калорийность еды
 const FOOD_CALORIES = {
+    [FOOD_TYPES.NONE]: 0,
     [FOOD_TYPES.APPLE]: 10,
     [FOOD_TYPES.BREAD]: 25,
     [FOOD_TYPES.NECTAR]: 60
@@ -34,6 +39,13 @@ const FOOD_CALORIES = {
 
 // Статистики юнитов
 const UNIT_STATS = {
+    [UNIT_TYPES.ANTHILL]: {
+        speed: 0,
+        vision: 10,  // Большой радиус видимости для муравейника
+        health: 1000,
+        attack: 0,
+        cargo: 0
+    },
     [UNIT_TYPES.SCOUT]: {
         speed: 7,
         vision: 4,

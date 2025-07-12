@@ -1,0 +1,189 @@
+openapi: 3.0.3
+info:
+  title: AntProtocol API
+  description: API for the AntProtocol game
+  version: 1.0.0
+servers:
+  - url: https://games.datsteam.dev
+    description: Production server
+paths:
+  /register:
+    post:
+      summary: Register for the game
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  lobbyEndsIn:
+                    type: number
+                  nextTurn:
+                    type: number
+                  realm:
+                    type: string
+  /arena:
+    get:
+      summary: Get current game state
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Current game state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  turnNo:
+                    type: integer
+                  score:
+                    type: integer
+                  ants:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Ant'
+                  enemies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Ant'
+                  food:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Food'
+                  home:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Position'
+                  nextTurnIn:
+                    type: number
+  /move:
+    post:
+      summary: Submit moves for ants
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                moves:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      ant:
+                        type: string
+                        format: uuid
+                      path:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Position'
+            example:
+              moves:
+                - ant: "11111111-2222-3333-4444-555555555555"
+                  path:
+                    - q: 10
+                      r: 20
+      responses:
+        '200':
+          description: Moves submitted successfully
+  /rounds:
+    get:
+      summary: Get available game rounds
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Available rounds
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  now:
+                    type: string
+                    format: date-time
+                  rounds:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Round'
+  /logs:
+    get:
+      summary: Get game logs
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Game logs
+components:
+  schemas:
+    Position:
+      type: object
+      properties:
+        q:
+          type: integer
+        r:
+          type: integer
+    Ant:
+      type: object
+      properties:
+        q:
+          type: integer
+        r:
+          type: integer
+        type:
+          type: integer
+          description: "Ant type: 1=Worker, 2=Soldier, 3=Scout"
+        health:
+          type: integer
+        id:
+          type: string
+          format: uuid
+        food:
+          type: object
+          properties:
+            type:
+              type: integer
+              description: "Food type: 0=None, 1=Apple, 2=Bread, 3=Nectar"
+            amount:
+              type: integer
+    Food:
+      type: object
+      properties:
+        q:
+          type: integer
+        r:
+          type: integer
+        type:
+          type: integer
+          description: "Food type: 1=Apple, 2=Bread, 3=Nectar"
+        amount:
+          type: integer
+    Round:
+      type: object
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [pending, active, completed]
+        startAt:
+          type: string
+          format: date-time
+        endAt:
+          type: string
+          format: date-time
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Auth-Token

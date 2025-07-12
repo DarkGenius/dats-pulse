@@ -174,6 +174,9 @@ class WebSocketServer {
         this.analysis = analysis;
         this.strategy = strategy;
         
+        logger.debug(`WebSocket: Broadcasting game update to ${this.clients.size} clients`);
+        logger.debug(`WebSocket: Game state - Turn: ${gameState?.turnNo}, Ants: ${gameState?.ants?.length || 0}, Food: ${gameState?.food?.length || 0}`);
+        
         // Отправляем обновление всем подключенным клиентам
         this.broadcast({
             type: 'gameUpdate',

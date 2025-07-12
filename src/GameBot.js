@@ -113,6 +113,9 @@ class GameBot {
     }
 
     async gameLoop() {
+        let lastTurnNumber = -1;
+        let turnStartTime = Date.now();
+        
         while (this.isRunning) {
             try {
                 this.gameState = await this.apiClient.getGameState();
@@ -124,17 +127,48 @@ class GameBot {
                 }
 
                 this.turnNumber = this.gameState.turnNo || 0;
+                
+                // Check if turn has progressed
+                if (this.turnNumber === lastTurnNumber) {
+                    const elapsed = Date.now() - turnStartTime;
+                    if (elapsed < 2000) {
+                        logger.debug(`Turn ${this.turnNumber}: Waiting for turn progression (${elapsed}ms elapsed)`);
+                        await this.sleep(1000);
+                        continue;
+                    } else if (elapsed > 30000) {
+                        logger.warn(`Turn ${this.turnNumber}: Stuck for ${elapsed}ms, forcing progression`);
+                        lastTurnNumber = -1; // Reset to allow processing
+                    } else {
+                        logger.debug(`Turn ${this.turnNumber}: Still processing same turn (${elapsed}ms elapsed)`);
+                        await this.sleep(1000);
+                        continue;
+                    }
+                }
+                
+                // New turn detected or forced progression
+                if (this.turnNumber !== lastTurnNumber) {
+                    logger.info(`Turn ${this.turnNumber}: New turn detected (previous: ${lastTurnNumber})`);
+                    lastTurnNumber = this.turnNumber;
+                    turnStartTime = Date.now();
+                }
+
                 logger.info(`Turn ${this.turnNumber}: Processing game state`);
+                logger.debug(`Turn ${this.turnNumber}: Game state - Units: ${this.gameState.ants?.length || 0}, Resources: ${this.gameState.food?.length || 0}`);
 
                 const analysis = this.gameAnalyzer.analyze(this.gameState);
                 const strategy = this.strategyManager.determineStrategy(analysis, this.turnNumber);
                 const decisions = this.makeDecisions(analysis, strategy);
 
+                logger.debug(`Turn ${this.turnNumber}: Generated ${decisions.unitMoves.length} moves, ${decisions.combatActions.length} combat actions, ${decisions.resourceActions.length} resource actions`);
+
                 // Обновляем визуализатор
                 this.updateVisualizer(analysis, strategy);
 
                 await this.executeDecisions(decisions);
-                await this.sleep(500);
+                
+                // Wait longer after executing decisions to allow server processing
+                logger.debug(`Turn ${this.turnNumber}: Waiting for server to process moves...`);
+                await this.sleep(2000);
                 
             } catch (error) {
                 logger.error('Error in game loop iteration:', error);
@@ -164,19 +198,32 @@ class GameBot {
     async executeDecisions(decisions) {
         try {
             if (decisions.unitMoves.length > 0) {
-                await this.apiClient.sendMoves(decisions.unitMoves);
-                logger.info(`Sent ${decisions.unitMoves.length} unit moves`);
+                logger.debug(`Turn ${this.turnNumber}: Sending moves:`, JSON.stringify(decisions.unitMoves, null, 2));
+                const response = await this.apiClient.sendMoves(decisions.unitMoves);
+                logger.info(`Turn ${this.turnNumber}: Sent ${decisions.unitMoves.length} unit moves successfully`);
+                logger.debug(`Turn ${this.turnNumber}: Server response:`, response);
+            } else {
+                logger.debug(`Turn ${this.turnNumber}: No unit moves to send`);
             }
 
             if (decisions.combatActions.length > 0) {
-                logger.info(`Planned ${decisions.combatActions.length} combat actions`);
+                logger.info(`Turn ${this.turnNumber}: Planned ${decisions.combatActions.length} combat actions`);
+                logger.debug(`Turn ${this.turnNumber}: Combat actions:`, JSON.stringify(decisions.combatActions, null, 2));
             }
 
             if (decisions.resourceActions.length > 0) {
-                logger.info(`Planned ${decisions.resourceActions.length} resource actions`);
+                logger.info(`Turn ${this.turnNumber}: Planned ${decisions.resourceActions.length} resource actions`);
+                logger.debug(`Turn ${this.turnNumber}: Resource actions:`, JSON.stringify(decisions.resourceActions, null, 2));
+            }
+            
+            if (decisions.unitMoves.length === 0 && decisions.combatActions.length === 0 && decisions.resourceActions.length === 0) {
+                logger.warn(`Turn ${this.turnNumber}: No decisions generated - this might indicate an issue`);
             }
         } catch (error) {
-            logger.error('Error executing decisions:', error);
+            logger.error(`Turn ${this.turnNumber}: Error executing decisions:`, error);
+            if (error.response) {
+                logger.error(`Turn ${this.turnNumber}: Server response:`, error.response);
+            }
         }
     }
 
