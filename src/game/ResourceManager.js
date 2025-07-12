@@ -415,28 +415,93 @@ class ResourceManager {
      * @returns {number} Коэффициент безопасности маршрута
      */
     calculateUnitSafety(unit, resource, analysis) {
-        // TEMPORARY FIX: Return 1.0 (safe) to test if safety calculation is blocking assignments
-        // TODO: Fix safety calculation properly
-        return 1.0;
+        const threats = analysis.threats.threats || [];
+        const enemies = analysis.units.enemyUnits || [];
         
-        /* Original implementation that may be too restrictive:
-        const threats = analysis.threats.threats;
-        const path = this.estimatePath(unit, resource);
+        // If no threats, full safety
+        if (threats.length === 0 && enemies.length === 0) {
+            return 1.0;
+        }
         
         let safety = 1.0;
         
-        path.forEach(point => {
+        // Check direct path safety (simplified - just check resource and intermediate points)
+        const resourceDistance = this.calculateDistance(unit, resource);
+        const pathPoints = this.generateSimplePath(unit, resource, Math.min(resourceDistance, 8));
+        
+        // Check threats along the path
+        pathPoints.forEach(point => {
             const nearbyThreats = threats.filter(threat => 
-                this.calculateDistance(point, threat.unit) <= 3
+                this.calculateDistance(point, threat.unit) <= 4
             );
             
+            const nearbyEnemies = enemies.filter(enemy => 
+                this.calculateDistance(point, enemy) <= 3
+            );
+            
+            // Reduce safety based on nearby threats
             if (nearbyThreats.length > 0) {
-                safety *= Math.max(0.5, 1.0 - (nearbyThreats.length * 0.1));
+                const threatPenalty = Math.min(0.6, nearbyThreats.length * 0.2);
+                safety *= (1.0 - threatPenalty);
+            }
+            
+            // Reduce safety based on nearby enemies
+            if (nearbyEnemies.length > 0) {
+                const enemyPenalty = Math.min(0.4, nearbyEnemies.length * 0.15);
+                safety *= (1.0 - enemyPenalty);
             }
         });
         
+        // Check resource destination safety
+        const resourceThreats = threats.filter(threat => 
+            this.calculateDistance(resource, threat.unit) <= 5
+        );
+        
+        const resourceEnemies = enemies.filter(enemy => 
+            this.calculateDistance(resource, enemy) <= 4
+        );
+        
+        if (resourceThreats.length > 0) {
+            safety *= Math.max(0.3, 1.0 - (resourceThreats.length * 0.25));
+        }
+        
+        if (resourceEnemies.length > 0) {
+            safety *= Math.max(0.4, 1.0 - (resourceEnemies.length * 0.2));
+        }
+        
+        // Check unit type vulnerability
+        const unitTypeName = this.unitTypeNames[unit.type];
+        if (unitTypeName === 'worker' && (threats.length > 0 || enemies.length > 0)) {
+            safety *= 0.8; // Workers are more vulnerable
+        } else if (unitTypeName === 'scout' && (threats.length > 0 || enemies.length > 0)) {
+            safety *= 0.9; // Scouts can escape better than workers
+        }
+        
+        // Consider ally support
+        const anthill = analysis.units.anthill;
+        if (anthill) {
+            const distanceFromBase = this.calculateDistance(resource, anthill);
+            const myFighters = analysis.units.myUnits.filter(u => 
+                this.unitTypeNames[u.type] === 'soldier' && 
+                this.calculateDistance(u, resource) <= 8
+            );
+            
+            // Boost safety if we have nearby fighters
+            if (myFighters.length > 0) {
+                safety *= (1.0 + myFighters.length * 0.15);
+            }
+            
+            // Reduce safety for very distant resources
+            if (distanceFromBase > 25) {
+                safety *= 0.7;
+            }
+        }
+        
+        // Ensure safety is between 0.1 and 1.5
+        safety = Math.max(0.1, Math.min(1.5, safety));
+        
+        logger.debug(`Unit ${unit.id} safety to resource at (${resource.q}, ${resource.r}): ${safety.toFixed(2)} (threats: ${threats.length}, enemies: ${enemies.length})`);
         return safety;
-        */
     }
 
     /**
@@ -960,17 +1025,50 @@ class ResourceManager {
 
     /**
      * Вычисляет расстояние между двумя позициями в гексагональной системе координат.
-     * @param {Object} pos1 - Первая позиция с координатами x, y
-     * @param {Object} pos2 - Вторая позиция с координатами x, y
+     * @param {Object} pos1 - Первая позиция с координатами q, r
+     * @param {Object} pos2 - Вторая позиция с координатами q, r
      * @returns {number} Расстояние в гексагональных клетках или Infinity при ошибке
      */
     calculateDistance(pos1, pos2) {
         if (!pos1 || !pos2) return Infinity;
         
-        const dx = pos1.x - pos2.x;
-        const dy = pos1.y - pos2.y;
+        // Hexagonal distance calculation using q, r coordinates
+        const q1 = pos1.q || 0;
+        const r1 = pos1.r || 0;
+        const s1 = -q1 - r1;
         
-        return Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dx + dy));
+        const q2 = pos2.q || 0;
+        const r2 = pos2.r || 0;
+        const s2 = -q2 - r2;
+        
+        return Math.max(Math.abs(q1 - q2), Math.abs(r1 - r2), Math.abs(s1 - s2));
+    }
+    
+    /**
+     * Generates a simplified path for safety analysis.
+     * @param {Object} from - Starting position
+     * @param {Object} to - Target position
+     * @param {number} maxPoints - Maximum points to generate
+     * @returns {Array} Array of path points
+     */
+    generateSimplePath(from, to, maxPoints = 5) {
+        const points = [];
+        const dq = to.q - from.q;
+        const dr = to.r - from.r;
+        const distance = Math.max(Math.abs(dq), Math.abs(dr), Math.abs(-dq - dr));
+        
+        if (distance === 0) return [from];
+        
+        const steps = Math.min(maxPoints, distance);
+        
+        for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            const q = Math.round(from.q + dq * t);
+            const r = Math.round(from.r + dr * t);
+            points.push({ q, r });
+        }
+        
+        return points;
     }
 }
 
