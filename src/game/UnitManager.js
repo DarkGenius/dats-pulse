@@ -6,6 +6,7 @@ const {
     UNIT_TYPE_NAMES, 
     UNIT_STATS 
 } = require('../constants/GameConstants');
+const PathfindingValidator = require('./PathfindingValidator');
 
 /**
  * Управляет поведением и движением юнитов.
@@ -24,22 +25,24 @@ class UnitManager {
         
         this.movementQueue = [];
         this.unitAssignments = new Map();
+        this.pathValidator = new PathfindingValidator();
     }
 
     /**
      * Планирует действия для всех юнитов на основе стратегии и анализа.
      * @param {Object} analysis - Анализ состояния игры
      * @param {Object} strategy - Стратегия для текущего хода
+     * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object} Объект с массивом команд движения
      */
-    planUnitActions(analysis, strategy) {
+    planUnitActions(analysis, strategy, resourceAssignmentManager = null) {
         const moves = [];
         const myUnits = analysis.units.myUnits;
         
         this.clearOldAssignments();
         
         myUnits.forEach(unit => {
-            const unitAction = this.planUnitAction(unit, analysis, strategy);
+            const unitAction = this.planUnitAction(unit, analysis, strategy, resourceAssignmentManager);
             if (unitAction) {
                 moves.push(unitAction);
                 this.unitAssignments.set(unit.id, unitAction);
@@ -54,17 +57,50 @@ class UnitManager {
      * @param {Object} unit - Юнит для планирования
      * @param {Object} analysis - Анализ состояния игры
      * @param {Object} strategy - Стратегия
+     * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object|null} Команда движения или null
      */
-    planUnitAction(unit, analysis, strategy) {
+    planUnitAction(unit, analysis, strategy, resourceAssignmentManager = null) {
+        // Проверяем, есть ли уже назначение из центрального менеджера
+        if (resourceAssignmentManager) {
+            const centralAssignment = resourceAssignmentManager.getUnitAssignment(unit.id);
+            if (centralAssignment) {
+                return this.executeResourceAssignment(unit, centralAssignment, analysis);
+            }
+        }
+        
         const existingAssignment = this.unitAssignments.get(unit.id);
         
         if (existingAssignment && this.shouldContinueAssignment(existingAssignment, analysis)) {
             return this.continueAssignment(unit, existingAssignment, analysis);
         }
 
-        const newAssignment = this.assignNewTask(unit, analysis, strategy);
+        const newAssignment = this.assignNewTask(unit, analysis, strategy, resourceAssignmentManager);
         return newAssignment;
+    }
+
+    /**
+     * Выполняет назначение ресурса из центрального менеджера
+     * @param {Object} unit - Юнит
+     * @param {Object} assignment - Назначение ресурса
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Команда движения или null
+     */
+    executeResourceAssignment(unit, assignment, analysis) {
+        const target = assignment.target;
+        const path = this.findPath(unit, target, analysis);
+        
+        if (path && path.length > 0) {
+            logger.debug(`Unit ${unit.id} executing centralized resource assignment to (${target.q}, ${target.r})`);
+            return {
+                unit_id: unit.id,
+                path: path,
+                assignment: assignment
+            };
+        }
+        
+        logger.warn(`Unit ${unit.id} cannot path to assigned resource at (${target.q}, ${target.r})`);
+        return null;
     }
 
     /**
@@ -103,7 +139,7 @@ class UnitManager {
         if (path && path.length > 0) {
             return {
                 unit_id: unit.id,
-                move: path[0],
+                path: path,
                 assignment: assignment
             };
         }
@@ -116,13 +152,14 @@ class UnitManager {
      * @param {Object} unit - Юнит
      * @param {Object} analysis - Анализ состояния игры
      * @param {Object} strategy - Стратегия
+     * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object|null} Команда движения или null
      */
-    assignNewTask(unit, analysis, strategy) {
+    assignNewTask(unit, analysis, strategy, resourceAssignmentManager = null) {
         const taskPriority = this.getTaskPriority(unit, analysis, strategy);
         
         for (const task of taskPriority) {
-            const action = this.executeTask(unit, task, analysis, strategy);
+            const action = this.executeTask(unit, task, analysis, strategy, resourceAssignmentManager);
             if (action) {
                 return action;
             }
@@ -141,26 +178,84 @@ class UnitManager {
     getTaskPriority(unit, analysis, strategy) {
         const tasks = [];
         const phase = strategy.phase;
+        const currentTurn = analysis.gameState?.turnNo || 0;
+        
+        // CRITICAL: Always check if unit needs to return to anthill first
+        if (this.shouldReturnToAnthill(unit, analysis)) {
+            tasks.push('return_to_anthill');
+            return tasks; // Return immediately - this is the highest priority
+        }
+        
+        // END-GAME HEURISTIC: If game is nearing end (turn 380+), restrict unit movement
+        if (this.shouldRestrictMovementForEndGame(unit, analysis, currentTurn)) {
+            // Only allow nearby resource collection and return to anthill
+            const nearbyTasks = this.getNearbyResourceTasks(unit, analysis);
+            if (nearbyTasks.length > 0) {
+                return nearbyTasks;
+            }
+            // If no nearby resources, return to anthill area
+            tasks.push('return_to_anthill');
+            return tasks;
+        }
+        
+        // CARGO-AWARE PRIORITIZATION: If unit is moderately loaded (50%+), avoid distractions
+        const shouldAvoidDistractions = this.shouldAvoidDistractions(unit, analysis);
+        
+        // NECTAR COLLECTION: ABSOLUTE HIGHEST PRIORITY - check first before any other tasks
+        // This ensures nectar is collected immediately when available, overriding raids and defense
+        if (analysis.resources && analysis.resources.byType && analysis.resources.byType.nectar && 
+            analysis.resources.byType.nectar.length > 0) {
+            
+            // Check if unit can actually collect nectar (not carrying incompatible resource)
+            if (!unit.food || unit.food.amount === 0 || unit.food.type === this.foodTypes.NECTAR) {
+                logger.debug(`Unit ${unit.id}: Nectar available (${analysis.resources.byType.nectar.length} sources), prioritizing nectar collection over all other tasks`);
+                tasks.push('nectar_collection');
+                return tasks; // Return immediately - nectar collection is absolute priority
+            }
+        }
+        
+        // If unit should avoid distractions, only allow safe resource collection
+        if (shouldAvoidDistractions) {
+            logger.debug(`Unit ${unit.id} avoiding distractions due to moderate cargo load, focusing on safe resource collection`);
+            const safeTasks = this.getSafeResourceTasks(unit, analysis);
+            if (safeTasks.length > 0) {
+                return safeTasks;
+            }
+            // If no safe resource tasks, continue to anthill
+            tasks.push('return_to_anthill');
+            return tasks;
+        }
+        
+        // Only proceed to other tasks if no nectar is available or unit cannot collect it
+        
+        // Always prioritize raiding enemy anthills if discovered
+        if (this.hasDiscoveredEnemyAnthills(analysis)) {
+            tasks.push('raid_enemy_anthill');
+        }
         
         if (analysis.threats.immediateThreats.length > 0) {
             tasks.push('immediate_defense');
         }
         
         const unitTypeName = this.unitTypeNames[unit.type];
+        
         if (unitTypeName === 'scout') {
-            tasks.push('nectar_collection', 'exploration', 'resource_scouting');
+            // Scouts prioritize finding enemy bases and high-value resources
+            tasks.push('find_enemy_anthill', 'aggressive_exploration', 'bread_collection', 'exploration', 'resource_scouting', 'apple_collection');
         } else if (unitTypeName === 'soldier') {
-            tasks.push('combat', 'convoy_protection', 'territory_defense');
+            // Soldiers can collect resources between combat
+            tasks.push('hunt_enemies', 'combat', 'bread_collection', 'aggressive_exploration', 'convoy_protection', 'territory_defense', 'apple_collection');
         } else if (unitTypeName === 'worker') {
-            tasks.push('bread_collection', 'apple_collection', 'construction');
+            // Workers are the primary resource collectors
+            tasks.push('bread_collection', 'apple_collection', 'assist_raid', 'construction');
         }
         
         if (phase === 'early') {
-            tasks.push('resource_collection', 'exploration');
+            tasks.push('resource_collection', 'aggressive_exploration');
         } else if (phase === 'mid') {
-            tasks.push('territory_control', 'resource_optimization');
+            tasks.push('find_enemy_anthill', 'territory_control', 'resource_optimization');
         } else if (phase === 'late') {
-            tasks.push('high_value_resources', 'enemy_disruption');
+            tasks.push('raid_enemy_anthill', 'hunt_enemies', 'high_value_resources', 'enemy_disruption');
         }
         
         return tasks;
@@ -174,18 +269,30 @@ class UnitManager {
      * @param {Object} strategy - Стратегия
      * @returns {Object|null} Команда движения или null
      */
-    executeTask(unit, task, analysis, strategy) {
+    executeTask(unit, task, analysis, strategy, resourceAssignmentManager = null) {
         switch (task) {
+            case 'return_to_anthill':
+                return this.returnToAnthill(unit, analysis);
             case 'immediate_defense':
                 return this.defendAnthill(unit, analysis);
             case 'nectar_collection':
-                return this.collectNectar(unit, analysis);
+                return this.collectNectar(unit, analysis, resourceAssignmentManager);
             case 'bread_collection':
-                return this.collectBread(unit, analysis);
+                return this.collectBread(unit, analysis, resourceAssignmentManager);
             case 'apple_collection':
-                return this.collectApples(unit, analysis);
+                return this.collectApples(unit, analysis, resourceAssignmentManager);
             case 'exploration':
                 return this.exploreMap(unit, analysis);
+            case 'aggressive_exploration':
+                return this.aggressiveExploration(unit, analysis);
+            case 'find_enemy_anthill':
+                return this.findEnemyAnthill(unit, analysis);
+            case 'raid_enemy_anthill':
+                return this.raidEnemyAnthill(unit, analysis);
+            case 'hunt_enemies':
+                return this.huntEnemies(unit, analysis);
+            case 'assist_raid':
+                return this.assistRaid(unit, analysis);
             case 'combat':
                 return this.engageCombat(unit, analysis);
             case 'convoy_protection':
@@ -221,7 +328,7 @@ class UnitManager {
             if (path && path.length > 0) {
                 return {
                     unit_id: unit.id,
-                    move: path[0],
+                    path: path,  // Отправляем весь путь, а не только первый шаг
                     assignment: {
                         type: 'immediate_defense',
                         target: nearestThreat.unit,
@@ -238,22 +345,57 @@ class UnitManager {
      * Планирует сбор нектара - ресурса с наивысшей калорийностью.
      * @param {Object} unit - Юнит-сборщик
      * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object|null} Команда движения к нектару или null
      */
-    collectNectar(unit, analysis) {
+    collectNectar(unit, analysis, resourceAssignmentManager = null) {
+        // RULE CHECK: Юнит не может переносить несколько типов ресурсов одновременно
+        if (unit.food && unit.food.amount > 0 && unit.food.type !== this.foodTypes.NECTAR) {
+            logger.debug(`Unit ${unit.id} cannot collect nectar: already carrying ${this.foodTypeNames[unit.food.type] || unit.food.type} (${unit.food.amount} units)`);
+            return null; // Уже несет другой тип ресурса
+        }
+        
+        // Проверяем наличие ресурсов нектара
+        if (!analysis.resources || !analysis.resources.byType) {
+            logger.warn(`Unit ${unit.id}: No resources analysis available`);
+            return null;
+        }
+        
         const nectarResources = analysis.resources.byType.nectar;
+        if (!nectarResources) {
+            logger.debug(`Unit ${unit.id}: No nectar array in analysis.resources.byType`);
+            return null;
+        }
+        
         if (nectarResources.length === 0) {
+            logger.debug(`Unit ${unit.id}: No nectar resources available (array empty)`);
             return null;
         }
 
-        const nearestNectar = this.findNearestResource(unit, nectarResources);
+        logger.debug(`Unit ${unit.id}: Found ${nectarResources.length} nectar resources available`);
+
+        // Если используется централизованная система, ищем среди доступных ресурсов
+        const availableNectar = resourceAssignmentManager ? 
+            resourceAssignmentManager.getAvailableResources(nectarResources) : 
+            nectarResources;
+
+        if (availableNectar.length === 0) {
+            logger.debug(`Unit ${unit.id}: No available nectar resources (all reserved)`);
+            return null;
+        }
+
+        const nearestNectar = this.findNearestResource(unit, availableNectar);
         if (nearestNectar) {
+            const distance = this.calculateDistance(unit, nearestNectar);
+            logger.debug(`Unit ${unit.id}: Nearest nectar at (${nearestNectar.q}, ${nearestNectar.r}), distance: ${distance}`);
+            
             const path = this.findPath(unit, nearestNectar, analysis);
             
             if (path && path.length > 0) {
+                logger.info(`Unit ${unit.id}: Assigned to collect nectar at (${nearestNectar.q}, ${nearestNectar.r})`);
                 return {
                     unit_id: unit.id,
-                    move: path[0],
+                    path: path,
                     assignment: {
                         type: 'resource_collection',
                         target: nearestNectar,
@@ -261,7 +403,11 @@ class UnitManager {
                         priority: 'high'
                     }
                 };
+            } else {
+                logger.warn(`Unit ${unit.id}: No valid path to nectar at (${nearestNectar.q}, ${nearestNectar.r})`);
             }
+        } else {
+            logger.warn(`Unit ${unit.id}: Could not find nearest nectar from ${availableNectar.length} available`);
         }
         
         return null;
@@ -271,22 +417,38 @@ class UnitManager {
      * Планирует сбор хлеба - ресурса со средней калорийностью.
      * @param {Object} unit - Юнит-сборщик
      * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object|null} Команда движения к хлебу или null
      */
-    collectBread(unit, analysis) {
+    collectBread(unit, analysis, resourceAssignmentManager = null) {
+        // RULE CHECK: Юнит не может переносить несколько типов ресурсов одновременно
+        if (unit.food && unit.food.amount > 0 && unit.food.type !== this.foodTypes.BREAD) {
+            return null; // Уже несет другой тип ресурса
+        }
+        
         const breadResources = analysis.resources.byType.bread;
         if (breadResources.length === 0) {
             return null;
         }
 
-        const nearestBread = this.findNearestResource(unit, breadResources);
+        // Если используется централизованная система, ищем среди доступных ресурсов
+        const availableBread = resourceAssignmentManager ? 
+            resourceAssignmentManager.getAvailableResources(breadResources) : 
+            breadResources;
+
+        if (availableBread.length === 0) {
+            logger.debug(`Unit ${unit.id}: No available bread resources (all reserved)`);
+            return null;
+        }
+
+        const nearestBread = this.findNearestResource(unit, availableBread);
         if (nearestBread) {
             const path = this.findPath(unit, nearestBread, analysis);
             
             if (path && path.length > 0) {
                 return {
                     unit_id: unit.id,
-                    move: path[0],
+                    path: path,
                     assignment: {
                         type: 'resource_collection',
                         target: nearestBread,
@@ -304,22 +466,38 @@ class UnitManager {
      * Планирует сбор яблок - ресурса с низкой калорийностью.
      * @param {Object} unit - Юнит-сборщик
      * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object|null} Команда движения к яблокам или null
      */
-    collectApples(unit, analysis) {
+    collectApples(unit, analysis, resourceAssignmentManager = null) {
+        // RULE CHECK: Юнит не может переносить несколько типов ресурсов одновременно
+        if (unit.food && unit.food.amount > 0 && unit.food.type !== this.foodTypes.APPLE) {
+            return null; // Уже несет другой тип ресурса
+        }
+        
         const appleResources = analysis.resources.byType.apple;
         if (appleResources.length === 0) {
             return null;
         }
 
-        const nearestApple = this.findNearestResource(unit, appleResources);
+        // Если используется централизованная система, ищем среди доступных ресурсов
+        const availableApples = resourceAssignmentManager ? 
+            resourceAssignmentManager.getAvailableResources(appleResources) : 
+            appleResources;
+
+        if (availableApples.length === 0) {
+            logger.debug(`Unit ${unit.id}: No available apple resources (all reserved)`);
+            return null;
+        }
+
+        const nearestApple = this.findNearestResource(unit, availableApples);
         if (nearestApple) {
             const path = this.findPath(unit, nearestApple, analysis);
             
             if (path && path.length > 0) {
                 return {
                     unit_id: unit.id,
-                    move: path[0],
+                    path: path,
                     assignment: {
                         type: 'resource_collection',
                         target: nearestApple,
@@ -352,7 +530,7 @@ class UnitManager {
         if (path && path.length > 0) {
             return {
                 unit_id: unit.id,
-                move: path[0],
+                path: path,
                 assignment: {
                     type: 'exploration',
                     target: bestTarget,
@@ -390,7 +568,7 @@ class UnitManager {
         if (path && path.length > 0) {
             return {
                 unit_id: unit.id,
-                move: path[0],
+                path: path,
                 assignment: {
                     type: 'combat',
                     target: bestTarget.unit,
@@ -425,7 +603,7 @@ class UnitManager {
         if (path && path.length > 0) {
             return {
                 unit_id: unit.id,
-                move: path[0],
+                path: path,
                 assignment: {
                     type: 'convoy_protection',
                     target: workerToProtect,
@@ -458,7 +636,7 @@ class UnitManager {
             if (path && path.length > 0) {
                 return {
                     unit_id: unit.id,
-                    move: path[0],
+                    path: path,
                     assignment: {
                         type: 'territory_defense',
                         target: nearestPatrolPoint,
@@ -493,7 +671,7 @@ class UnitManager {
         if (path && path.length > 0) {
             return {
                 unit_id: unit.id,
-                move: path[0],
+                path: path,
                 assignment: {
                     type: 'resource_scouting',
                     target: bestTarget,
@@ -523,7 +701,7 @@ class UnitManager {
         if (path && path.length > 0) {
             return {
                 unit_id: unit.id,
-                move: path[0],
+                path: path,
                 assignment: {
                     type: 'patrol',
                     target: randomNearbyPoint,
@@ -536,7 +714,7 @@ class UnitManager {
     }
 
     /**
-     * Находит путь от юнита к цели с учётом безопасности.
+     * Находит путь от юнита к цели с учётом безопасности и игровых ограничений.
      * @param {Object} unit - Исходный юнит
      * @param {Object} target - Целевая позиция
      * @param {Object} analysis - Анализ состояния игры
@@ -547,34 +725,120 @@ class UnitManager {
             return null;
         }
 
+        // Сначала пытаемся построить прямой путь
         const directPath = this.calculateDirectPath(unit, target);
         
         if (directPath.length === 0) {
             return null;
         }
 
-        const safetyCheckedPath = this.verifySafety(directPath, analysis);
-        return safetyCheckedPath;
+        // Проверяем путь на соответствие игровым правилам
+        const validation = this.pathValidator.validateAndCorrectPath(unit, directPath, analysis.gameState);
+        
+        if (validation.validPath.length > 0) {
+            // Дополнительно проверяем на безопасность
+            const safetyCheckedPath = this.verifySafety(validation.validPath, analysis);
+            return safetyCheckedPath;
+        }
+
+        // Если прямой путь заблокирован, пытаемся найти альтернативный
+        logger.debug(`Direct path blocked for unit ${unit.id}: ${validation.reason}`);
+        const alternativePath = this.pathValidator.findAlternativePath(unit, target, analysis.gameState);
+        
+        if (alternativePath && alternativePath.length > 0) {
+            const safetyCheckedPath = this.verifySafety(alternativePath, analysis);
+            return safetyCheckedPath;
+        }
+
+        // Не удалось найти путь
+        logger.debug(`No valid path found for unit ${unit.id} to target ${JSON.stringify(target)}`);
+        return null;
     }
 
     /**
      * Вычисляет прямой путь между двумя точками в гексагональной системе координат.
      * @param {Object} start - Начальная позиция с координатами q, r
      * @param {Object} end - Конечная позиция с координатами q, r
-     * @returns {Array} Массив с первым шагом движения
+     * @returns {Array} Массив точек пути от start до end (не включая start)
      */
     calculateDirectPath(start, end) {
-        const dq = end.q - start.q;
-        const dr = end.r - start.r;
+        if (!start || !end) return [];
         
-        if (Math.abs(dq) === 0 && Math.abs(dr) === 0) {
-            return [];
-        }
+        const distance = this.calculateDistance(start, end);
+        if (distance === 0) return [];
 
-        const stepQ = dq !== 0 ? Math.sign(dq) : 0;
-        const stepR = dr !== 0 ? Math.sign(dr) : 0;
+        // Для простоты и эффективности, возвращаем путь по шагам
+        // в направлении цели, используя соседние гексы
+        const path = [];
+        let current = { q: start.q, r: start.r };
         
-        return [{ q: start.q + stepQ, r: start.r + stepR }];
+        for (let i = 0; i < distance && i < 10; i++) { // Ограничиваем длину пути
+            const nextStep = this.getNextStepTowards(current, end);
+            if (!nextStep) break;
+            
+            path.push(nextStep);
+            current = nextStep;
+            
+            // Если достигли цели, останавливаемся
+            if (current.q === end.q && current.r === end.r) {
+                break;
+            }
+        }
+        
+        return path;
+    }
+
+    /**
+     * Определяет следующий шаг в направлении цели
+     * @param {Object} from - Текущая позиция
+     * @param {Object} to - Целевая позиция
+     * @returns {Object|null} Следующая позиция или null
+     */
+    getNextStepTowards(from, to) {
+        const dq = to.q - from.q;
+        const dr = to.r - from.r;
+        const ds = (-dq - dr);
+        
+        // Определяем основное направление движения
+        let stepQ = 0;
+        let stepR = 0;
+        
+        if (Math.abs(dq) >= Math.abs(dr) && Math.abs(dq) >= Math.abs(ds)) {
+            // Движение по оси Q
+            stepQ = Math.sign(dq);
+            if (dr !== 0) {
+                stepR = Math.sign(dr);
+            }
+        } else if (Math.abs(dr) >= Math.abs(ds)) {
+            // Движение по оси R
+            stepR = Math.sign(dr);
+            if (dq !== 0) {
+                stepQ = Math.sign(dq);
+            }
+        } else {
+            // Движение по оси S (диагональ)
+            if (dq !== 0) stepQ = -Math.sign(ds);
+            if (dr !== 0) stepR = -Math.sign(ds);
+        }
+        
+        // Корректируем, чтобы оставаться на соседнем гексе
+        if (Math.abs(stepQ) + Math.abs(stepR) > 1) {
+            // Выбираем одно из двух направлений
+            if (Math.abs(dq) > Math.abs(dr)) {
+                stepR = 0;
+            } else {
+                stepQ = 0;
+            }
+        }
+        
+        if (stepQ === 0 && stepR === 0) {
+            return null;
+        }
+        
+        return {
+            q: from.q + stepQ,
+            r: from.r + stepR
+        };
     }
 
     /**
@@ -797,14 +1061,15 @@ class UnitManager {
         }
 
         const unexplored = [];
-        const searchRadius = 15;
-
-        for (let q = anthill.q - searchRadius; q <= anthill.q + searchRadius; q++) {
-            for (let r = anthill.r - searchRadius; r <= anthill.r + searchRadius; r++) {
-                const point = { q, r };
-                if (!this.isPositionExplored(point, analysis)) {
-                    unexplored.push(point);
-                }
+        // Increased search radius for aggressive exploration
+        const searchRadius = 50;
+        
+        // Use spiral pattern for better exploration coverage
+        const spiralPoints = this.generateSpiralPattern(anthill, searchRadius);
+        
+        for (const point of spiralPoints) {
+            if (!this.isPositionExplored(point, analysis)) {
+                unexplored.push(point);
             }
         }
 
@@ -1018,6 +1283,719 @@ class UnitManager {
         const s2 = -q2 - r2;
         
         return Math.max(Math.abs(q1 - q2), Math.abs(r1 - r2), Math.abs(s1 - s2));
+    }
+    
+    /**
+     * Генерирует точки в виде спирали для эффективного исследования карты.
+     * @param {Object} center - Центральная точка (муравейник)
+     * @param {number} maxRadius - Максимальный радиус спирали
+     * @returns {Array} Массив точек в порядке спирали
+     */
+    generateSpiralPattern(center, maxRadius) {
+        const points = [];
+        const directions = [
+            { q: 1, r: 0 },   // right
+            { q: 0, r: 1 },   // down-right
+            { q: -1, r: 1 },  // down-left
+            { q: -1, r: 0 },  // left
+            { q: 0, r: -1 },  // up-left
+            { q: 1, r: -1 }   // up-right
+        ];
+        
+        let q = center.q;
+        let r = center.r;
+        points.push({ q, r });
+        
+        for (let radius = 1; radius <= maxRadius; radius++) {
+            // Move to the starting position of this ring
+            q = center.q + radius;
+            r = center.r;
+            
+            // Traverse each side of the hexagonal ring
+            for (let dir = 0; dir < 6; dir++) {
+                for (let step = 0; step < radius; step++) {
+                    points.push({ q, r });
+                    // Move in current direction
+                    q += directions[dir].q;
+                    r += directions[dir].r;
+                }
+            }
+        }
+        
+        return points;
+    }
+    
+    /**
+     * Проверяет, обнаружены ли вражеские муравейники.
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {boolean} true, если обнаружены вражеские муравейники
+     */
+    hasDiscoveredEnemyAnthills(analysis) {
+        if (!analysis.gameState || !analysis.gameState.discoveredEnemyAnthills) {
+            return false;
+        }
+        return analysis.gameState.discoveredEnemyAnthills.length > 0;
+    }
+    
+    /**
+     * Агрессивное исследование карты для поиска врагов.
+     * @param {Object} unit - Юнит
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Команда движения
+     */
+    aggressiveExploration(unit, analysis) {
+        const anthill = analysis.units.anthill;
+        if (!anthill) return null;
+        
+        // Explore in expanding circles, prioritizing unexplored distant areas
+        const maxDistance = 50;
+        const currentDistance = this.calculateDistance(unit, anthill);
+        
+        // If unit is close to home, send it far
+        let targetDistance = currentDistance < 15 ? 30 : currentDistance + 10;
+        targetDistance = Math.min(targetDistance, maxDistance);
+        
+        // Generate target in a random direction at target distance
+        const angle = Math.random() * Math.PI * 2;
+        const target = {
+            q: Math.round(anthill.q + Math.cos(angle) * targetDistance),
+            r: Math.round(anthill.r + Math.sin(angle) * targetDistance)
+        };
+        
+        const path = this.findPath(unit, target, analysis);
+        if (path && path.length > 0) {
+            return {
+                unit_id: unit.id,
+                path: path,
+                assignment: {
+                    type: 'aggressive_exploration',
+                    target: target,
+                    priority: 'high'
+                }
+            };
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Ищет вражеские муравейники.
+     * @param {Object} unit - Юнит-разведчик
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Команда движения
+     */
+    findEnemyAnthill(unit, analysis) {
+        const anthill = analysis.units.anthill;
+        if (!anthill) return null;
+        
+        // Scout in systematic grid pattern to find enemy bases
+        const gridSize = 20;
+        const maxSearchRadius = 60;
+        
+        // Calculate grid position to explore
+        const gridX = Math.floor(unit.q / gridSize) * gridSize;
+        const gridY = Math.floor(unit.r / gridSize) * gridSize;
+        
+        // Find unexplored grid cells
+        const unexploredGrids = [];
+        for (let dx = -3; dx <= 3; dx++) {
+            for (let dy = -3; dy <= 3; dy++) {
+                const target = {
+                    q: gridX + dx * gridSize,
+                    r: gridY + dy * gridSize
+                };
+                
+                const distance = this.calculateDistance(anthill, target);
+                if (distance <= maxSearchRadius && !this.isPositionExplored(target, analysis)) {
+                    unexploredGrids.push(target);
+                }
+            }
+        }
+        
+        if (unexploredGrids.length > 0) {
+            // Sort by distance from home (explore far areas first)
+            unexploredGrids.sort((a, b) => {
+                const distA = this.calculateDistance(anthill, a);
+                const distB = this.calculateDistance(anthill, b);
+                return distB - distA;
+            });
+            
+            const target = unexploredGrids[0];
+            const path = this.findPath(unit, target, analysis);
+            
+            if (path && path.length > 0) {
+                return {
+                    unit_id: unit.id,
+                    path: path,
+                    assignment: {
+                        type: 'find_enemy_anthill',
+                        target: target,
+                        priority: 'high'
+                    }
+                };
+            }
+        }
+        
+        // If no grid cells to explore, do aggressive exploration
+        return this.aggressiveExploration(unit, analysis);
+    }
+    
+    /**
+     * Атакует обнаруженный вражеский муравейник.
+     * @param {Object} unit - Юнит
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Команда движения
+     */
+    raidEnemyAnthill(unit, analysis) {
+        // Check if we have discovered enemy anthills
+        const enemyAnthills = analysis.gameState?.discoveredEnemyAnthills || [];
+        if (enemyAnthills.length === 0) {
+            // Check enemies array for anthills (type 0)
+            const enemyAnthillsFromEnemies = (analysis.gameState?.enemies || [])
+                .filter(enemy => enemy.type === 0);
+            
+            if (enemyAnthillsFromEnemies.length > 0) {
+                enemyAnthills.push(...enemyAnthillsFromEnemies);
+            }
+        }
+        
+        if (enemyAnthills.length === 0) return null;
+        
+        // Analyze feasibility of raiding each enemy anthill
+        const raidOpportunities = enemyAnthills.map(anthill => 
+            this.analyzeRaidFeasibility(unit, anthill, analysis)
+        ).filter(opportunity => opportunity.feasible);
+        
+        if (raidOpportunities.length === 0) {
+            logger.debug(`Unit ${unit.id}: No feasible enemy anthill raids available`);
+            return null;
+        }
+        
+        // Sort by raid score (higher is better)
+        raidOpportunities.sort((a, b) => b.score - a.score);
+        const bestTarget = raidOpportunities[0];
+        
+        logger.info(`Unit ${unit.id}: Initiating raid on enemy anthill at (${bestTarget.anthill.q}, ${bestTarget.anthill.r}) - Score: ${bestTarget.score.toFixed(2)}`);
+        
+        const path = this.findPath(unit, bestTarget.anthill, analysis);
+        if (path && path.length > 0) {
+            return {
+                unit_id: unit.id,
+                path: path,
+                assignment: {
+                    type: 'raid_enemy_anthill',
+                    target: bestTarget.anthill,
+                    priority: 'critical',
+                    raidScore: bestTarget.score
+                }
+            };
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Охотится на вражеские юниты.
+     * @param {Object} unit - Юнит-солдат
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Команда движения
+     */
+    huntEnemies(unit, analysis) {
+        const enemies = analysis.units.enemyUnits || [];
+        if (enemies.length === 0) {
+            // No visible enemies, explore aggressively to find them
+            return this.aggressiveExploration(unit, analysis);
+        }
+        
+        // Prioritize enemy workers and scouts
+        const priorityTargets = enemies.filter(enemy => 
+            enemy.type === this.unitTypes.WORKER || enemy.type === this.unitTypes.SCOUT
+        );
+        
+        const targets = priorityTargets.length > 0 ? priorityTargets : enemies;
+        const nearestTarget = this.findNearestPosition(unit, targets);
+        
+        if (nearestTarget) {
+            const path = this.findPath(unit, nearestTarget, analysis);
+            if (path && path.length > 0) {
+                return {
+                    unit_id: unit.id,
+                    path: path,
+                    assignment: {
+                        type: 'hunt_enemies',
+                        target: nearestTarget,
+                        priority: 'high'
+                    }
+                };
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Помогает в рейде на вражеский муравейник (для рабочих).
+     * @param {Object} unit - Юнит-рабочий
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Команда движения
+     */
+    assistRaid(unit, analysis) {
+        // Check if any soldiers are raiding
+        const raidingSoldiers = analysis.units.myUnits.filter(u => {
+            const assignment = this.unitAssignments.get(u.id);
+            return assignment && assignment.assignment?.type === 'raid_enemy_anthill';
+        });
+        
+        if (raidingSoldiers.length === 0) return null;
+        
+        // Follow the nearest raiding soldier
+        const nearestRaider = this.findNearestPosition(unit, raidingSoldiers);
+        if (!nearestRaider) return null;
+        
+        // Stay close but not too close
+        const followDistance = 3;
+        const currentDistance = this.calculateDistance(unit, nearestRaider);
+        
+        if (currentDistance > followDistance) {
+            const path = this.findPath(unit, nearestRaider, analysis);
+            if (path && path.length > 0) {
+                return {
+                    unit_id: unit.id,
+                    path: path,
+                    assignment: {
+                        type: 'assist_raid',
+                        target: nearestRaider,
+                        priority: 'medium'
+                    }
+                };
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Проверяет, должен ли юнит вернуться к муравейнику для разгрузки ресурсов.
+     * @param {Object} unit - Юнит
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {boolean} true, если юнит должен вернуться к муравейнику
+     */
+    shouldReturnToAnthill(unit, analysis) {
+        if (!unit.food || !unit.food.amount) {
+            return false; // No cargo
+        }
+        
+        const unitTypeName = this.unitTypeNames[unit.type];
+        const maxCapacity = this.getUnitCargoCapacity(unitTypeName);
+        const currentCargo = unit.food.amount;
+        const cargoPercentage = (currentCargo / maxCapacity) * 100;
+        
+        // Return when cargo is 80% full or more, or when carrying high-value resources
+        const cargoThreshold = maxCapacity * 0.8;
+        const isNearlyFull = currentCargo >= cargoThreshold;
+        
+        // Always return immediately if carrying nectar (most valuable resource)
+        const hasNectar = unit.food.type === this.foodTypes.NECTAR;
+        
+        // Log cargo status for debugging
+        const resourceType = this.foodTypeNames[unit.food.type] || unit.food.type;
+        logger.debug(`Unit ${unit.id} cargo check: ${currentCargo}/${maxCapacity} (${cargoPercentage.toFixed(1)}%) of ${resourceType}`);
+        
+        if (hasNectar) {
+            logger.info(`Unit ${unit.id} must return to anthill: carrying valuable nectar (${currentCargo} units)`);
+            return true;
+        }
+        
+        if (isNearlyFull) {
+            logger.info(`Unit ${unit.id} must return to anthill: cargo nearly full (${cargoPercentage.toFixed(1)}%)`);
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Планирует возвращение юнита к муравейнику для разгрузки ресурсов.
+     * @param {Object} unit - Юнит с грузом
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Команда движения к муравейнику или null
+     */
+    returnToAnthill(unit, analysis) {
+        const anthill = analysis.units.anthill;
+        if (!anthill) {
+            logger.warn(`Unit ${unit.id} needs to return but no anthill found`);
+            return null;
+        }
+        
+        // Check if unit is already at anthill
+        const distanceToAnthill = this.calculateDistance(unit, anthill);
+        if (distanceToAnthill === 0 && unit.food && unit.food.amount > 0) {
+            // Unit has reached anthill and can unload resources
+            const cargoValue = this.calculateCargoValue(unit);
+            const resourceType = this.foodTypeNames[unit.food.type] || unit.food.type;
+            const cargoAmount = unit.food.amount;
+            
+            logger.info(`🏠 Unit ${unit.id} has reached anthill and unloaded ${cargoAmount} units of ${resourceType} (${cargoValue} calories total)`);
+            
+            // Note: The actual unloading will happen automatically when the unit steps on the anthill hex
+            // We just log this event for tracking purposes
+        }
+        
+        // Calculate path to anthill
+        const path = this.findPath(unit, anthill, analysis);
+        if (path && path.length > 0) {
+            const cargoValue = this.calculateCargoValue(unit);
+            const resourceType = this.foodTypeNames[unit.food.type] || unit.food.type;
+            const cargoAmount = unit.food.amount;
+            
+            logger.info(`📦 Unit ${unit.id} heading to anthill to unload ${cargoAmount} units of ${resourceType} (${cargoValue} calories), distance: ${distanceToAnthill} hexes`);
+            
+            return {
+                unit_id: unit.id,
+                path: path,
+                assignment: {
+                    type: 'return_to_anthill',
+                    target: anthill,
+                    priority: 'critical',
+                    cargoValue: cargoValue,
+                    cargoType: resourceType,
+                    cargoAmount: cargoAmount
+                }
+            };
+        }
+        
+        logger.warn(`Unit ${unit.id} cannot find path to anthill (distance: ${distanceToAnthill})`);
+        return null;
+    }
+    
+    /**
+     * Получает грузоподъёмность юнита по его типу.
+     * @param {string} unitTypeName - Название типа юнита
+     * @returns {number} Грузоподъёмность юнита
+     */
+    getUnitCargoCapacity(unitTypeName) {
+        const capacities = {
+            worker: 8,    // Workers are the best carriers
+            scout: 4,     // Scouts are fast but carry less
+            soldier: 2    // Soldiers focus on combat, not carrying
+        };
+        return capacities[unitTypeName] || 2;
+    }
+    
+    /**
+     * Вычисляет стоимость груза, который несёт юнит.
+     * @param {Object} unit - Юнит с грузом
+     * @returns {number} Общая калорийная стоимость груза
+     */
+    calculateCargoValue(unit) {
+        if (!unit.food || !unit.food.amount || !unit.food.type) {
+            return 0;
+        }
+        
+        const { FOOD_CALORIES } = require('../constants/GameConstants');
+        const resourceValue = FOOD_CALORIES[unit.food.type] || 0;
+        
+        return resourceValue * unit.food.amount;
+    }
+    
+    /**
+     * Анализирует целесообразность рейда на вражеский муравейник.
+     * @param {Object} unit - Юнит-нападающий
+     * @param {Object} enemyAnthill - Вражеский муравейник
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object} Результат анализа с флагом feasible и оценкой score
+     */
+    analyzeRaidFeasibility(unit, enemyAnthill, analysis) {
+        const myAnthill = analysis.units.anthill;
+        if (!myAnthill) {
+            return { feasible: false, score: 0, reason: 'No home anthill found' };
+        }
+        
+        // Базовые факторы анализа
+        const distance = this.calculateDistance(unit, enemyAnthill);
+        const distanceFromHome = this.calculateDistance(myAnthill, enemyAnthill);
+        const myUnits = analysis.units.myUnits;
+        const enemyUnits = analysis.units.enemyUnits;
+        
+        // Проверяем дистанцию - слишком далеко не стоит идти
+        if (distance > 40) {
+            return { feasible: false, score: 0, reason: `Too far (distance: ${distance})` };
+        }
+        
+        // Анализируем силы
+        const myFighters = myUnits.filter(u => u.type === this.unitTypes.SOLDIER);
+        const nearbyEnemies = enemyUnits.filter(enemy => 
+            this.calculateDistance(enemy, enemyAnthill) <= 8
+        );
+        
+        // Оценка моих боевых сил
+        const myPower = myFighters.reduce((power, fighter) => {
+            const stats = this.unitStats[fighter.type];
+            return power + (stats ? stats.attack * (stats.health / 100) : 50);
+        }, 0);
+        
+        // Оценка вражеских сил рядом с их муравейником
+        const enemyPower = nearbyEnemies.reduce((power, enemy) => {
+            const stats = this.unitStats[enemy.type];
+            return power + (stats ? stats.attack * (stats.health / 100) : 50);
+        }, 0) + 200; // Добавляем бонус за защиту муравейника
+        
+        // Проверяем численное превосходство
+        if (myPower < enemyPower * 0.8) {
+            return { 
+                feasible: false, 
+                score: 0, 
+                reason: `Insufficient power (my: ${myPower.toFixed(1)}, enemy: ${enemyPower.toFixed(1)})` 
+            };
+        }
+        
+        // Анализируем игровую фазу и ресурсы
+        const gameState = analysis.gameState;
+        const myCalories = gameState.calories || 0;
+        const turn = gameState.turnNo || 0;
+        
+        // В поздней игре рейд становится более приоритетным
+        let phaseMultiplier = 1.0;
+        if (turn > 50) {
+            phaseMultiplier = 2.0; // Поздняя игра - агрессивная стратегия
+        } else if (turn > 25) {
+            phaseMultiplier = 1.5; // Средняя игра
+        }
+        
+        // Рассчитываем итоговую оценку
+        let score = 0;
+        
+        // Фактор превосходства в силе (0-100)
+        const powerRatio = Math.min(myPower / enemyPower, 2.0);
+        score += powerRatio * 100;
+        
+        // Бонус за близость (чем ближе, тем лучше) (0-50)
+        const distanceScore = Math.max(0, 50 - distance);
+        score += distanceScore;
+        
+        // Штраф за удаленность от дома (0-30)
+        const homeDistancePenalty = Math.min(30, distanceFromHome * 0.5);
+        score -= homeDistancePenalty;
+        
+        // Бонус за наличие ресурсов для затяжного боя (0-30)
+        const resourceBonus = Math.min(30, myCalories / 100);
+        score += resourceBonus;
+        
+        // Применяем фазовый множитель
+        score *= phaseMultiplier;
+        
+        // Минимальный порог для начала рейда
+        const minScore = 120;
+        const feasible = score >= minScore;
+        
+        logger.debug(`Raid analysis for anthill at (${enemyAnthill.q}, ${enemyAnthill.r}): 
+            Power ratio: ${powerRatio.toFixed(2)}, Distance: ${distance}, 
+            Score: ${score.toFixed(1)}, Feasible: ${feasible}`);
+        
+        return {
+            feasible,
+            score,
+            anthill: enemyAnthill,
+            powerRatio,
+            distance,
+            reason: feasible ? 'Raid is feasible' : `Score too low (${score.toFixed(1)} < ${minScore})`
+        };
+    }
+    
+    /**
+     * Определяет, нужно ли ограничивать движение юнитов в конце игры.
+     * @param {Object} unit - Юнит
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {number} currentTurn - Номер текущего хода
+     * @returns {boolean} true, если нужно ограничить движение
+     */
+    shouldRestrictMovementForEndGame(unit, analysis, currentTurn) {
+        const gameEndTurn = 420;
+        const endGameThreshold = 380; // Начинаем ограничения за 40 ходов до конца
+        
+        if (currentTurn < endGameThreshold) {
+            return false;
+        }
+        
+        const anthill = analysis.units.anthill;
+        if (!anthill) {
+            return false;
+        }
+        
+        const turnsLeft = gameEndTurn - currentTurn;
+        const distanceToHome = this.calculateDistance(unit, anthill);
+        const unitSpeed = this.getUnitSpeed(unit.type);
+        
+        // Максимальное расстояние, на которое юнит может уйти и успеть вернуться
+        const maxSafeDistance = Math.floor((turnsLeft * unitSpeed) / 2) - 2; // -2 для запаса
+        
+        logger.debug(`End-game check: Turn ${currentTurn}, turns left: ${turnsLeft}, distance to home: ${distanceToHome}, max safe distance: ${maxSafeDistance}`);
+        
+        // Если юнит уже далеко, он должен возвращаться
+        if (distanceToHome > maxSafeDistance) {
+            logger.info(`Unit ${unit.id} restricted movement due to end-game (distance: ${distanceToHome} > max: ${maxSafeDistance})`);
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Получает задачи по сбору близких ресурсов для конца игры.
+     * @param {Object} unit - Юнит
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив задач для близких ресурсов
+     */
+    getNearbyResourceTasks(unit, analysis) {
+        const tasks = [];
+        const anthill = analysis.units.anthill;
+        if (!anthill) return tasks;
+        
+        const currentTurn = analysis.gameState?.turnNo || 0;
+        const turnsLeft = 420 - currentTurn;
+        const maxSafeDistance = Math.floor(turnsLeft / 4); // Очень консервативный подход
+        
+        // Проверяем нектар (всегда приоритет)
+        const nearbyNectar = (analysis.resources.byType.nectar || []).filter(resource => 
+            this.calculateDistance(unit, resource) <= maxSafeDistance
+        );
+        if (nearbyNectar.length > 0) {
+            tasks.push('nectar_collection');
+        }
+        
+        // Проверяем хлеб
+        const nearbyBread = (analysis.resources.byType.bread || []).filter(resource => 
+            this.calculateDistance(unit, resource) <= maxSafeDistance
+        );
+        if (nearbyBread.length > 0) {
+            tasks.push('bread_collection');
+        }
+        
+        // Проверяем яблоки
+        const nearbyApples = (analysis.resources.byType.apple || []).filter(resource => 
+            this.calculateDistance(unit, resource) <= maxSafeDistance
+        );
+        if (nearbyApples.length > 0) {
+            tasks.push('apple_collection');
+        }
+        
+        logger.debug(`End-game nearby resources for unit ${unit.id}: nectar=${nearbyNectar.length}, bread=${nearbyBread.length}, apples=${nearbyApples.length}`);
+        
+        return tasks;
+    }
+    
+    /**
+     * Получает скорость юнита по его типу.
+     * @param {number} unitType - Тип юнита
+     * @returns {number} Скорость юнита в гексах за ход
+     */
+    getUnitSpeed(unitType) {
+        const speeds = {
+            [this.unitTypes.WORKER]: 3,
+            [this.unitTypes.SOLDIER]: 4,
+            [this.unitTypes.SCOUT]: 7
+        };
+        return speeds[unitType] || 3;
+    }
+    
+    /**
+     * Определяет, должен ли юнит избегать отвлечений из-за значительной загрузки.
+     * @param {Object} unit - Юнит
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {boolean} true, если юнит должен избегать отвлечений
+     */
+    shouldAvoidDistractions(unit, analysis) {
+        if (!unit.food || !unit.food.amount) {
+            return false; // Нет груза - отвлечения не критичны
+        }
+        
+        const unitTypeName = this.unitTypeNames[unit.type];
+        const maxCapacity = this.getUnitCargoCapacity(unitTypeName);
+        const currentCargo = unit.food.amount;
+        const cargoPercentage = (currentCargo / maxCapacity) * 100;
+        
+        // Порог для избегания отвлечений - 50% загрузки
+        const distractionThreshold = maxCapacity * 0.5;
+        const shouldAvoid = currentCargo >= distractionThreshold;
+        
+        if (shouldAvoid) {
+            const resourceType = this.foodTypeNames[unit.food.type] || unit.food.type;
+            logger.info(`💼 Unit ${unit.id} avoiding distractions: ${cargoPercentage.toFixed(1)}% loaded with ${resourceType} (${currentCargo}/${maxCapacity})`);
+        }
+        
+        return shouldAvoid;
+    }
+    
+    /**
+     * Получает безопасные задачи по сбору ресурсов для загруженных юнитов.
+     * Приоритизирует близкие ресурсы и избегает опасных областей.
+     * @param {Object} unit - Загруженный юнит
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Array} Массив безопасных задач по ресурсам
+     */
+    getSafeResourceTasks(unit, analysis) {
+        const tasks = [];
+        const anthill = analysis.units.anthill;
+        if (!anthill) return tasks;
+        
+        const maxSafeDistance = 8; // Ограничиваем расстояние для безопасности
+        const threats = analysis.threats.threats || [];
+        
+        // Функция проверки безопасности позиции
+        const isSafePosition = (position) => {
+            return threats.every(threat => 
+                this.calculateDistance(position, threat.unit) > 5
+            );
+        };
+        
+        // Проверяем нектар (всегда приоритет, даже для загруженных юнитов)
+        if (analysis.resources.byType.nectar) {
+            const safeNectar = analysis.resources.byType.nectar.filter(resource => {
+                const distance = this.calculateDistance(unit, resource);
+                return distance <= maxSafeDistance && isSafePosition(resource);
+            });
+            
+            if (safeNectar.length > 0) {
+                logger.debug(`Unit ${unit.id} found ${safeNectar.length} safe nectar sources nearby`);
+                tasks.push('nectar_collection');
+                return tasks; // Нектар - абсолютный приоритет
+            }
+        }
+        
+        // Только если юнит несет совместимый ресурс, он может собирать еще
+        if (unit.food && unit.food.type) {
+            const compatibleResourceType = this.foodTypeNames[unit.food.type];
+            
+            // Проверяем совместимые ресурсы
+            let resourceArray = [];
+            let taskName = '';
+            
+            if (unit.food.type === this.foodTypes.BREAD) {
+                resourceArray = analysis.resources.byType.bread || [];
+                taskName = 'bread_collection';
+            } else if (unit.food.type === this.foodTypes.APPLE) {
+                resourceArray = analysis.resources.byType.apple || [];
+                taskName = 'apple_collection';
+            }
+            
+            if (resourceArray.length > 0) {
+                const safeResources = resourceArray.filter(resource => {
+                    const distance = this.calculateDistance(unit, resource);
+                    return distance <= maxSafeDistance && isSafePosition(resource);
+                });
+                
+                if (safeResources.length > 0) {
+                    logger.debug(`Unit ${unit.id} found ${safeResources.length} safe ${compatibleResourceType} sources nearby`);
+                    tasks.push(taskName);
+                }
+            }
+        }
+        
+        if (tasks.length === 0) {
+            logger.debug(`Unit ${unit.id} found no safe resource collection opportunities, should head to anthill`);
+        }
+        
+        return tasks;
     }
 }
 

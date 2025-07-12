@@ -134,17 +134,23 @@ class StatsUpdater {
     updateStrategyStats() {
         if (!this.strategy) return;
         
-        // Следующий юнит для производства
-        const nextUnit = this.strategy.unitProduction?.nextUnitType;
-        if (nextUnit) {
-            this.setText('nextUnit', this.capitalizeFirst(nextUnit));
+        // Стратегия и фаза
+        if (this.strategy.name) {
+            this.setText('nextUnit', this.strategy.name);
         }
         
-        // Формация
-        const formations = this.strategy.combatStrategy?.formations;
-        if (formations && formations.length > 0) {
-            const formationNames = formations.map(f => f.type).join(', ');
-            this.setText('formation', formationNames);
+        // Боевая стратегия
+        const combatStance = this.strategy.combatStrategy?.stance;
+        if (combatStance) {
+            this.setText('combatStance', combatStance);
+        } else {
+            this.setText('combatStance', 'none');
+        }
+        
+        // Приоритеты
+        if (this.strategy.priorities && this.strategy.priorities.length > 0) {
+            const topPriorities = this.strategy.priorities.slice(0, 3).join(', ');
+            this.setText('formation', topPriorities);
         } else {
             this.setText('formation', 'none');
         }

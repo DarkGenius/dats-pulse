@@ -169,10 +169,11 @@ class WebSocketServer {
         }
     }
     
-    updateGameState(gameState, analysis = null, strategy = null) {
+    updateGameState(gameState, analysis = null, strategy = null, unitAssignments = null) {
         this.gameState = gameState;
         this.analysis = analysis;
         this.strategy = strategy;
+        this.unitAssignments = unitAssignments;
         
         logger.debug(`WebSocket: Broadcasting game update to ${this.clients.size} clients`);
         logger.debug(`WebSocket: Game state - Turn: ${gameState?.turnNo}, Ants: ${gameState?.ants?.length || 0}, Food: ${gameState?.food?.length || 0}`);
@@ -182,7 +183,8 @@ class WebSocketServer {
             type: 'gameUpdate',
             gameState: this.gameState,
             analysis: this.analysis,
-            strategy: this.strategy
+            strategy: this.strategy,
+            unitAssignments: this.unitAssignments
         });
     }
     

@@ -39,39 +39,51 @@
                     </div>
                 </div>
                 
-                <div class="legend">
-                    <h3>Legend</h3>
-                    <div class="legend-item">
-                        <div class="legend-color anthill"></div>
-                        <span>Anthill</span>
+                <div class="bottom-panel">
+                    <div class="legend">
+                        <h3>Legend</h3>
+                        <div class="legend-item">
+                            <div class="legend-color anthill"></div>
+                            <span>Anthill</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color worker"></div>
+                            <span>Worker</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color scout"></div>
+                            <span>Scout</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color soldier"></div>
+                            <span>Soldier</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color enemy"></div>
+                            <span>Enemy</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color nectar"></div>
+                            <span>Nectar (60 cal)</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color bread"></div>
+                            <span>Bread (25 cal)</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color apple"></div>
+                            <span>Apple (10 cal)</span>
+                        </div>
                     </div>
-                    <div class="legend-item">
-                        <div class="legend-color worker"></div>
-                        <span>Worker</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color scout"></div>
-                        <span>Scout</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color soldier"></div>
-                        <span>Soldier</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color enemy"></div>
-                        <span>Enemy</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color nectar"></div>
-                        <span>Nectar (60 cal)</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color bread"></div>
-                        <span>Bread (25 cal)</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color apple"></div>
-                        <span>Apple (10 cal)</span>
+                    <div class="log-panel">
+                        <div class="log-header">
+                            <h3>Game Log</h3>
+                            <label class="auto-scroll-checkbox">
+                                <input type="checkbox" id="auto-scroll-log" checked>
+                                <span>Автопрокрутка лога</span>
+                            </label>
+                        </div>
+                        <div id="log-container" class="log-container"></div>
                     </div>
                 </div>
             </div>
@@ -159,15 +171,15 @@
                 <div class="stats-section">
                     <h3>Strategy</h3>
                     <div class="stat-item">
-                        <span>Next Unit:</span>
-                        <span id="next-unit">-</span>
+                        <span>Current:</span>
+                        <span id="next-unit" style="font-weight: bold;">-</span>
                     </div>
                     <div class="stat-item">
-                        <span>Formation:</span>
-                        <span id="formation">-</span>
+                        <span>Priorities:</span>
+                        <span id="formation" style="font-size: 0.9em;">-</span>
                     </div>
                     <div class="stat-item">
-                        <span>Stance:</span>
+                        <span>Combat:</span>
                         <span id="combat-stance">-</span>
                     </div>
                 </div>
@@ -178,6 +190,7 @@
     <script src="hexgrid.js"></script>
     <script src="gameRenderer.js"></script>
     <script src="statsUpdater.js"></script>
+    <script src="logManager.js"></script>
     <script src="visualizer.js"></script>
 </body>
 </html>

@@ -1,228 +1,77 @@
 const logger = require('../utils/Logger');
 
-/**
- * Управляет стратегией игры на основе трехфазной модели.
- * Определяет приоритеты, производство юнитов, ресурсную стратегию и боевые действия.
- */
 class StrategyManager {
-    /**
-     * Инициализирует менеджер стратегии с оптимальными пропорциями юнитов и экономическими целями.
-     */
     constructor() {
         this.phases = {
             EARLY: 'early',
             MID: 'mid',
             LATE: 'late'
         };
-        
-        this.optimalProportions = {
-            early: {
-                worker: 0.6,
-                scout: 0.3,
-                soldier: 0.1
-            },
-            mid: {
-                worker: 0.5,
-                scout: 0.25,
-                soldier: 0.25
-            },
-            late: {
-                worker: 0.3,
-                scout: 0.35,
-                soldier: 0.35
-            }
-        };
-        
-        this.economicTargets = {
-            early: { caloriesPerTurn: 200, totalCalories: 4000 },
-            mid: { caloriesPerTurn: 500, totalCalories: 15000 },
-            late: { caloriesPerTurn: 800, totalCalories: 30000 }
-        };
     }
 
-    /**
-     * Определяет общую стратегию на основе анализа игры.
-     * @param {Object} analysis - Результат анализа состояния игры
-     * @param {number} turnNumber - Номер текущего хода
-     * @returns {Object} Комплексная стратегия с приоритетами, производством юнитов, ресурсной стратегией и боевыми действиями
-     */
     determineStrategy(analysis, turnNumber) {
         const phase = analysis.gamePhase;
         const strategy = {
+            name: this.getStrategyName(phase, analysis),
             phase,
-            priorities: this.getPhasePriorities(phase),
-            unitProduction: this.determineUnitProduction(analysis),
+            priorities: this.getPhasePriorities(phase, analysis),
             resourceStrategy: this.determineResourceStrategy(analysis),
             combatStrategy: this.determineCombatStrategy(analysis),
-            adaptations: this.determineAdaptations(analysis)
+            adaptations: this.determineAdaptations(analysis),
+            reasoning: []
         };
+        
+        // Add reasoning for phase selection
+        strategy.reasoning.push({
+            category: 'phase',
+            decision: phase,
+            details: `Turn ${turnNumber}, determining ${phase} phase strategy`
+        });
 
         logger.info(`Strategy for turn ${turnNumber} (${phase} phase):`, strategy);
         return strategy;
     }
-
-    /**
-     * Получает приоритеты для конкретной фазы игры.
-     * @param {string} phase - Фаза игры: 'early', 'mid', 'late'
-     * @returns {Array} Массив приоритетов в порядке важности
-     */
-    getPhasePriorities(phase) {
-        const priorities = {
-            early: [
-                'economic_expansion',
-                'resource_mapping',
-                'basic_defense',
-                'unit_production'
-            ],
-            mid: [
-                'balanced_expansion',
-                'territory_control',
-                'threat_assessment',
-                'resource_optimization'
-            ],
-            late: [
-                'optimization_dominance',
-                'high_value_resources',
-                'competitor_suppression',
-                'strategic_positioning'
-            ]
-        };
-
-        return priorities[phase] || priorities.early;
-    }
-
-    /**
-     * Определяет стратегию производства юнитов на основе текущего состояния.
-     * @param {Object} analysis - Анализ игры
-     * @returns {Object} Стратегия производства с оптимальными пропорциями, текущими пропорциями и следующим типом юнита
-     */
-    determineUnitProduction(analysis) {
-        const { gamePhase, units, threats, resources, economy } = analysis;
-        const currentProportions = units.proportions;
-        const optimalProportions = this.optimalProportions[gamePhase];
-        
-        const adaptedProportions = this.adaptProportions(
-            optimalProportions,
-            analysis
-        );
-
-        const nextUnitType = this.selectNextUnitType(
-            currentProportions,
-            adaptedProportions,
-            analysis
-        );
-
-        return {
-            optimalProportions: adaptedProportions,
-            currentProportions,
-            nextUnitType,
-            reasoning: this.getProductionReasoning(nextUnitType, analysis)
-        };
-    }
-
-    adaptProportions(baseProportions, analysis) {
-        const adapted = { ...baseProportions };
-        const threatLevel = analysis.threats.overallLevel;
-        
-        if (threatLevel > 0.7) {
-            adapted.soldier = Math.min(0.5, adapted.soldier + 0.15);
-            adapted.worker = Math.max(0.2, adapted.worker - 0.1);
-            adapted.scout = Math.max(0.2, adapted.scout - 0.05);
+    
+    getStrategyName(phase, analysis) {
+        // More aggressive strategy naming
+        if (analysis.gameState?.enemies?.length > 0) {
+            return 'aggressive_combat_' + phase;
+        } else if (phase === 'mid' || phase === 'late') {
+            return 'aggressive_exploration_' + phase;
+        } else if (analysis.threats.immediateThreats.length > 2) {
+            return 'defensive_' + phase;
+        } else if (analysis.resources.highValue.length > 5) {
+            return 'economic_' + phase;
+        } else {
+            return 'balanced_aggressive_' + phase;
         }
-
-        if (analysis.resources.highValue.length > 3) {
-            adapted.scout = Math.min(0.4, adapted.scout + 0.1);
-            adapted.worker = Math.max(0.3, adapted.worker - 0.05);
-            adapted.soldier = Math.max(0.2, adapted.soldier - 0.05);
-        }
-
-        if (analysis.economy.caloriesPerTurn < analysis.economy.targets.caloriesPerTurn * 0.8) {
-            adapted.worker = Math.min(0.6, adapted.worker + 0.1);
-            adapted.scout = Math.max(0.2, adapted.scout - 0.05);
-            adapted.soldier = Math.max(0.15, adapted.soldier - 0.05);
-        }
-
-        return adapted;
     }
 
-    selectNextUnitType(currentProportions, optimalProportions, analysis) {
-        const deviations = {
-            worker: optimalProportions.worker - currentProportions.worker,
-            scout: optimalProportions.scout - currentProportions.scout,
-            soldier: optimalProportions.soldier - currentProportions.soldier
-        };
+    getPhasePriorities(phase, analysis) {
+        let priorities = [];
 
-        const sortedDeviations = Object.entries(deviations)
-            .sort((a, b) => b[1] - a[1]);
-
-        const largestDeviation = sortedDeviations[0];
-        const unitType = largestDeviation[0];
-
-        if (this.shouldOverrideProduction(analysis)) {
-            return this.getOverrideUnitType(analysis);
-        }
-
-        return unitType;
-    }
-
-    shouldOverrideProduction(analysis) {
-        const nectarNearby = analysis.resources.byType.nectar.some(nectar => 
-            this.calculateDistance(analysis.units.anthill, nectar) <= 7
-        );
-        
-        const immediateThreats = analysis.threats.immediateThreats.length > 0;
-        const lowThreat = analysis.threats.overallLevel < 0.3;
-
-        return nectarNearby || immediateThreats || lowThreat;
-    }
-
-    getOverrideUnitType(analysis) {
-        const nectarNearby = analysis.resources.byType.nectar.some(nectar => 
-            this.calculateDistance(analysis.units.anthill, nectar) <= 7
-        );
-        
-        if (nectarNearby) {
-            return 'scout';
+        // Always prioritize finding and raiding enemy bases
+        if (analysis.gameState?.discoveredEnemyAnthills?.length > 0) {
+            priorities.push('raid_enemy_bases');
         }
 
         if (analysis.threats.immediateThreats.length > 0) {
-            return 'soldier';
+            priorities.push('immediate_defense');
         }
 
-        if (analysis.threats.overallLevel < 0.3) {
-            return 'worker';
+        switch (phase) {
+            case this.phases.EARLY:
+                priorities.push('economic_expansion', 'aggressive_scouting', 'resource_mapping');
+                break;
+            case this.phases.MID:
+                priorities.push('find_enemy_anthills', 'aggressive_expansion', 'territory_control');
+                break;
+            case this.phases.LATE:
+                priorities.push('enemy_base_destruction', 'aggressive_raiding', 'optimization_dominance', 'high_value_resources');
+                break;
         }
 
-        return 'worker';
-    }
-
-    getProductionReasoning(unitType, analysis) {
-        const reasons = [];
-        
-        if (unitType === 'scout') {
-            if (analysis.resources.byType.nectar.length > 0) {
-                reasons.push('nectar_collection');
-            }
-            if (analysis.territory.expansion.length > 0) {
-                reasons.push('territory_expansion');
-            }
-        } else if (unitType === 'soldier') {
-            if (analysis.threats.immediateThreats.length > 0) {
-                reasons.push('immediate_defense');
-            }
-            if (analysis.threats.overallLevel > 0.5) {
-                reasons.push('threat_response');
-            }
-        } else if (unitType === 'worker') {
-            if (analysis.economy.caloriesPerTurn < analysis.economy.targets.caloriesPerTurn) {
-                reasons.push('economic_growth');
-            }
-            if (analysis.resources.byType.bread.length > 0) {
-                reasons.push('resource_collection');
-            }
-        }
-
-        return reasons;
+        return priorities;
     }
 
     determineResourceStrategy(analysis) {
@@ -244,15 +93,32 @@ class StrategyManager {
         const anyApples = resources.byType.apple || [];
 
         if (nearNectar.length > 0) {
-            priorities.push({ type: 'nectar', priority: 'high', reason: 'high_calories_close' });
+            priorities.push({ 
+                type: 'nectar', 
+                priority: 'high', 
+                reason: 'high_calories_close',
+                count: nearNectar.length,
+                avgDistance: nearNectar.reduce((sum, r) => sum + r.distance, 0) / nearNectar.length
+            });
         }
         
         if (nearBread.length > 0) {
-            priorities.push({ type: 'bread', priority: 'medium', reason: 'medium_calories_close' });
+            priorities.push({ 
+                type: 'bread', 
+                priority: 'medium', 
+                reason: 'medium_calories_close',
+                count: nearBread.length,
+                avgDistance: nearBread.reduce((sum, r) => sum + r.distance, 0) / nearBread.length
+            });
         }
         
         if (anyApples.length > 0) {
-            priorities.push({ type: 'apple', priority: 'low', reason: 'low_calories_available' });
+            priorities.push({ 
+                type: 'apple', 
+                priority: 'low', 
+                reason: 'low_calories_available',
+                count: anyApples.length
+            });
         }
 
         return priorities.sort((a, b) => {
@@ -309,15 +175,15 @@ class StrategyManager {
     calculateUnitSuitability(unit, resource) {
         let suitability = 0;
         
-        if (resource.type === 'nectar' && unit.type === 'scout') {
+        if (resource.type === 'nectar' && unit.type === 3) { // scout
             suitability += 3;
-        } else if (resource.type === 'bread' && unit.type === 'worker') {
+        } else if (resource.type === 'bread' && unit.type === 1) { // worker
             suitability += 2;
         } else if (resource.type === 'apple') {
             suitability += 1;
         }
 
-        if (unit.type === 'worker') {
+        if (unit.type === 1) { // worker
             suitability += 1;
         }
 
@@ -344,17 +210,17 @@ class StrategyManager {
     identifyProtectedRoutes(analysis) {
         const routes = [];
         const myUnits = analysis.units.myUnits;
-        const fighters = myUnits.filter(u => u.type === 'fighter');
+        const soldiers = myUnits.filter(u => u.type === 2); // soldier
         
         analysis.resources.highValue.forEach(resourceInfo => {
-            const nearbyFighters = fighters.filter(fighter => 
-                this.calculateDistance(fighter, resourceInfo.resource) <= 4
+            const nearbySoldiers = soldiers.filter(soldier => 
+                this.calculateDistance(soldier, resourceInfo.resource) <= 4
             );
             
-            if (nearbyFighters.length > 0) {
+            if (nearbySoldiers.length > 0) {
                 routes.push({
                     resource: resourceInfo.resource,
-                    guards: nearbyFighters,
+                    guards: nearbySoldiers,
                     safety: 'protected'
                 });
             }
@@ -404,44 +270,49 @@ class StrategyManager {
     calculateForceStrength(units) {
         return units.reduce((strength, unit) => {
             const unitStrength = {
-                fighter: 70,
-                scout: 35,
-                worker: 25
+                2: 70, // soldier
+                3: 35, // scout
+                1: 25  // worker
             };
             return strength + (unitStrength[unit.type] || 0);
         }, 0);
     }
 
     getReadinessRecommendation(readiness) {
-        if (readiness > 1.8) {
+        // Always be aggressive
+        if (readiness > 0.5) {
             return 'attack';
-        } else if (readiness < 0.6) {
-            return 'retreat';
         } else {
-            return 'hold';
+            // Even when outnumbered, fight strategically
+            return 'guerrilla_attack';
         }
     }
 
     selectCombatStrategy(combatReadiness, threats, gamePhase) {
+        // Always be aggressive - we're here to win
         const strategy = {
-            stance: combatReadiness.recommendation,
-            tactics: [],
-            priorities: []
+            stance: 'aggressive',
+            tactics: ['hunt_enemies', 'find_enemy_bases', 'raid_enemy_territory'],
+            priorities: ['destroy_enemy_anthills', 'eliminate_all_threats', 'total_domination']
         };
 
         if (threats.immediateThreats.length > 0) {
-            strategy.tactics.push('immediate_defense');
-            strategy.priorities.push('protect_anthill');
+            strategy.tactics.unshift('immediate_offense');
+            strategy.priorities.unshift('destroy_immediate_threats');
         }
 
-        if (combatReadiness.ratio > 1.5) {
-            strategy.tactics.push('aggressive_expansion');
-            strategy.priorities.push('eliminate_threats');
+        if (combatReadiness.ratio > 1.0) {
+            strategy.tactics.push('total_war');
+            strategy.priorities.push('annihilate_enemies');
+        } else {
+            // Even when outnumbered, be aggressive
+            strategy.tactics.push('guerrilla_warfare');
+            strategy.priorities.push('harass_and_retreat');
         }
 
         if (gamePhase === 'late') {
-            strategy.tactics.push('resource_denial');
-            strategy.priorities.push('control_high_value_resources');
+            strategy.tactics.push('scorched_earth');
+            strategy.priorities.push('deny_all_resources');
         }
 
         return strategy;
@@ -449,13 +320,13 @@ class StrategyManager {
 
     recommendFormations(analysis) {
         const formations = [];
-        const fighters = analysis.units.myUnits.filter(u => u.type === 'fighter');
-        const scouts = analysis.units.myUnits.filter(u => u.type === 'scout');
+        const soldiers = analysis.units.myUnits.filter(u => u.type === 2); // soldier
+        const scouts = analysis.units.myUnits.filter(u => u.type === 3); // scout
         
-        if (fighters.length >= 3 && scouts.length >= 2) {
+        if (soldiers.length >= 3 && scouts.length >= 2) {
             formations.push({
                 type: 'trileaf',
-                units: fighters.slice(0, 3).concat(scouts.slice(0, 2)),
+                units: soldiers.slice(0, 3).concat(scouts.slice(0, 2)),
                 purpose: 'attack'
             });
         }
@@ -489,11 +360,11 @@ class StrategyManager {
     calculateTargetPriority(enemy, analysis) {
         let priority = 0;
         
-        if (enemy.type === 'fighter') {
+        if (enemy.type === 2) { // soldier
             priority += 3;
-        } else if (enemy.type === 'scout') {
+        } else if (enemy.type === 3) { // scout
             priority += 2;
-        } else if (enemy.type === 'worker') {
+        } else if (enemy.type === 1) { // worker
             priority += 1;
         }
 
@@ -510,7 +381,7 @@ class StrategyManager {
     getTargetReasoning(enemy, analysis) {
         const reasons = [];
         
-        if (enemy.type === 'fighter') {
+        if (enemy.type === 2) { // soldier
             reasons.push('high_threat_unit');
         }
         
@@ -524,28 +395,29 @@ class StrategyManager {
 
     determineAdaptations(analysis) {
         const adaptations = [];
-        
-        if (analysis.economy.caloriesPerTurn < analysis.economy.targets.caloriesPerTurn * 0.8) {
+        const unitCounts = analysis.units.counts;
+        const totalUnits = unitCounts.total;
+
+        if (totalUnits === 0) return adaptations;
+
+        const workerRatio = unitCounts.worker / totalUnits;
+        const soldierRatio = unitCounts.soldier / totalUnits;
+
+        if (workerRatio < 0.4 && analysis.threats.overallLevel < 0.5) {
             adaptations.push({
                 type: 'economic_focus',
-                action: 'increase_workers',
-                reason: 'below_economic_targets'
+                action: 'prioritize_resource_gathering',
+                reason: 'low_worker_ratio',
+                details: `Worker ratio: ${(workerRatio * 100).toFixed(1)}%, Threat level: ${(analysis.threats.overallLevel * 100).toFixed(1)}%`
             });
         }
 
-        if (analysis.threats.overallLevel > 0.7) {
+        if (soldierRatio < 0.25 && analysis.threats.overallLevel > 0.5) {
             adaptations.push({
                 type: 'military_focus',
-                action: 'increase_fighters',
-                reason: 'high_threat_level'
-            });
-        }
-
-        if (analysis.units.counts.total > 30 && analysis.threats.overallLevel < 0.3) {
-            adaptations.push({
-                type: 'expansion_focus',
-                action: 'increase_scouts',
-                reason: 'safe_expansion_opportunity'
+                action: 'prioritize_defense_and_attack',
+                reason: 'low_soldier_ratio_under_threat',
+                details: `Soldier ratio: ${(soldierRatio * 100).toFixed(1)}%, Threat level: ${(analysis.threats.overallLevel * 100).toFixed(1)}%`
             });
         }
 
@@ -555,10 +427,15 @@ class StrategyManager {
     calculateDistance(pos1, pos2) {
         if (!pos1 || !pos2) return Infinity;
         
-        const dx = pos1.x - pos2.x;
-        const dy = pos1.y - pos2.y;
+        const q1 = pos1.q || 0;
+        const r1 = pos1.r || 0;
+        const s1 = -q1 - r1;
         
-        return Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dx + dy));
+        const q2 = pos2.q || 0;
+        const r2 = pos2.r || 0;
+        const s2 = -q2 - r2;
+        
+        return Math.max(Math.abs(q1 - q2), Math.abs(r1 - r2), Math.abs(s1 - s2));
     }
 }
 

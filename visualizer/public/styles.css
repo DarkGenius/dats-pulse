@@ -98,10 +98,26 @@ h1 {
     background: #444;
 }
 
-.legend {
+.bottom-panel {
+    display: flex;
     background: #2d2d2d;
-    padding: 1rem;
     border-top: 1px solid #444;
+}
+
+.legend, .log-panel {
+    padding: 1rem;
+}
+
+.legend {
+    flex-basis: 250px;
+    border-right: 1px solid #444;
+}
+
+.log-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 200px; /* Or adjust as needed */
 }
 
 .legend h3 {
@@ -162,6 +178,116 @@ h1 {
     border-left: 2px solid #444;
     overflow-y: auto;
     padding: 1rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.log-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 1rem;
+    background: #1a1a1a;
+    border-radius: 6px;
+    border: 1px solid #444;
+    padding: 1rem;
+}
+
+.log-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.log-panel h3 {
+    color: #00ff88;
+    margin: 0;
+}
+
+.auto-scroll-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    color: #cccccc;
+    cursor: pointer;
+}
+
+.auto-scroll-checkbox input[type="checkbox"] {
+    cursor: pointer;
+    accent-color: #00ff88;
+}
+
+.auto-scroll-checkbox span {
+    cursor: pointer;
+    user-select: none;
+}
+
+.log-container {
+    flex: 1;
+    overflow-y: auto;
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+.log-message {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    margin-bottom: 0.25rem;
+}
+
+.log-message .timestamp {
+    color: #888;
+    margin-right: 0.5rem;
+}
+
+.log-message.gather {
+    color: #91e491;
+}
+
+.log-message.move {
+    color: #82c8e6;
+}
+
+.log-message.combat {
+    color: #ea8a8a;
+}
+
+.log-message.system {
+    color: #e6e682;
+}
+
+.log-message.strategy {
+    color: #ff88ff;
+    font-weight: bold;
+    background: rgba(255, 136, 255, 0.1);
+    border-left: 3px solid #ff88ff;
+}
+
+.log-message.enemy {
+    color: #ff6666;
+    background: rgba(255, 102, 102, 0.1);
+    border-left: 3px solid #ff6666;
+}
+
+.log-message.kill {
+    color: #66ff66;
+    font-weight: bold;
+    background: rgba(102, 255, 102, 0.1);
+    border-left: 3px solid #66ff66;
+}
+
+.log-message.death {
+    color: #ff3333;
+    font-weight: bold;
+    background: rgba(255, 51, 51, 0.2);
+    border-left: 3px solid #ff3333;
+}
+
+.log-message.damage {
+    color: #ffaa44;
+    background: rgba(255, 170, 68, 0.1);
 }
 
 .stats-section {
@@ -194,6 +320,15 @@ h1 {
 .stat-item span:last-child {
     color: #ffffff;
     font-weight: bold;
+    word-break: break-word;
+    text-align: right;
+    max-width: 60%;
+}
+
+/* Особые стили для блока стратегии */
+.stats-section:last-child .stat-item span:last-child {
+    font-size: 0.85rem;
+    line-height: 1.2;
 }
 
 .percentage {
@@ -298,14 +433,27 @@ h1 {
 
 .tooltip {
     position: absolute;
-    background: rgba(0, 0, 0, 0.9);
+    background: rgba(0, 0, 0, 0.95);
     color: white;
-    padding: 8px;
-    border-radius: 4px;
+    padding: 10px;
+    border-radius: 6px;
     font-size: 12px;
     pointer-events: none;
     z-index: 1000;
-    border: 1px solid #444;
+    border: 1px solid #666;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    max-width: 300px;
+    line-height: 1.4;
+}
+
+.tooltip strong {
+    color: #00ff88;
+}
+
+.tooltip hr {
+    margin: 5px 0;
+    border: none;
+    border-top: 1px solid #444;
 }
 
 @media (max-width: 1200px) {

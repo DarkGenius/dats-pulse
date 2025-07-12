@@ -6,8 +6,9 @@ class GameRenderer {
         
         this.gameState = null;
         this.analysis = null;
+        this.unitAssignments = {};
         this.followUnits = false;
-        this.showVisionRange = false;
+        this.showVisionRange = true;
         this.showMovementPaths = true;
         
         this.colors = {
@@ -49,6 +50,14 @@ class GameRenderer {
             3: 'nectar'
         };
         
+        this.hexTypes = {
+            1: { name: 'anthill', moveCost: 1, color: '#8B4513' },
+            2: { name: 'empty', moveCost: 1, color: '#333333' },
+            3: { name: 'mud', moveCost: 2, color: '#654321' },
+            4: { name: 'acid', moveCost: 1, color: '#90EE90', damage: 20 },
+            5: { name: 'rocks', moveCost: Infinity, color: '#696969' }
+        };
+        
         this.lastUnitPositions = new Map();
         this.animationFrame = null;
         
@@ -84,19 +93,37 @@ class GameRenderer {
         this.canvas.addEventListener('mousemove', (e) => {
             this.showTooltip(e);
         });
+        
+        // Hide tooltip when mouse leaves canvas
+        this.canvas.addEventListener('mouseleave', () => {
+            this.hideTooltip();
+        });
     }
     
-    updateGameState(gameState, analysis) {
+    updateGameState(gameState, analysis, unitAssignments) {
         console.log('GameRenderer: Received game state update', {
             turn: gameState?.turnNo,
             ants: gameState?.ants?.length || 0,
             enemies: gameState?.enemies?.length || 0,
             food: gameState?.food?.length || 0,
-            home: gameState?.home
+            home: gameState?.home,
+            map: gameState?.map?.length || 0,
+            assignments: unitAssignments ? Object.keys(unitAssignments).length : 0
         });
+        
+        // Отладочная информация о типах гексов
+        if (gameState?.map && gameState.map.length > 0) {
+            const hexTypeCounts = {};
+            gameState.map.forEach(hex => {
+                const key = `type${hex.type}_cost${hex.cost}`;
+                hexTypeCounts[key] = (hexTypeCounts[key] || 0) + 1;
+            });
+            console.log('Hex type distribution:', hexTypeCounts);
+        }
         
         this.gameState = gameState;
         this.analysis = analysis;
+        this.unitAssignments = unitAssignments || {};
         
         if (this.followUnits && gameState.ants && gameState.ants.length > 0) {
             // Центрируем на центре масс наших юнитов
@@ -147,10 +174,32 @@ class GameRenderer {
         const visibleHexes = this.hexGrid.getVisibleHexes();
         
         visibleHexes.forEach(hex => {
-            this.hexGrid.drawHex(hex.q, hex.r, {
-                stroke: this.colors.grid,
-                strokeWidth: 1
-            });
+            // Получаем информацию о типе гекса из карты (если есть)
+            const hexType = this.getHexType(hex.q, hex.r);
+            
+            if (hexType && hexType !== 2) { // 2 = empty, не рисуем фон для пустых
+                const hexInfo = this.hexTypes[hexType];
+                if (hexInfo) {
+                    // Рисуем фон для специальных типов гексов
+                    this.hexGrid.drawHex(hex.q, hex.r, {
+                        fill: hexInfo.color + '40', // Прозрачность 25%
+                        stroke: hexInfo.color,
+                        strokeWidth: 1
+                    });
+                } else {
+                    // Обычный гекс
+                    this.hexGrid.drawHex(hex.q, hex.r, {
+                        stroke: this.colors.grid,
+                        strokeWidth: 1
+                    });
+                }
+            } else {
+                // Обычный гекс
+                this.hexGrid.drawHex(hex.q, hex.r, {
+                    stroke: this.colors.grid,
+                    strokeWidth: 1
+                });
+            }
         });
     }
     
@@ -233,7 +282,12 @@ class GameRenderer {
         // Рисуем вражеских юнитов
         if (this.gameState.enemies) {
             this.gameState.enemies.forEach(enemy => {
-                this.drawUnit(enemy, true);
+                if (enemy.type === 0) {
+                    // Вражеский муравейник
+                    this.drawEnemyAnthill(enemy);
+                } else {
+                    this.drawUnit(enemy, true);
+                }
             });
         }
     }
@@ -245,11 +299,37 @@ class GameRenderer {
         const color = this.colors[unitType];
         const size = this.getUnitSize(unit.type);
         
+        // Для врагов добавляем дополнительные эффекты
+        if (isEnemy) {
+            // Рисуем красное свечение вокруг врага
+            this.hexGrid.drawCircle(unit.q, unit.r, size + 4, {
+                fill: 'rgba(255, 0, 0, 0.2)',
+                stroke: 'rgba(255, 0, 0, 0.6)',
+                strokeWidth: 2
+            });
+            
+            // Рисуем иконку типа врага
+            const pixel = this.hexGrid.hexToPixel(unit.q, unit.r);
+            this.ctx.save();
+            this.ctx.font = 'bold 10px Arial';
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            
+            const enemyIcon = {
+                1: 'W', // Worker
+                2: 'S', // Soldier
+                3: 'R'  // Scout (Raider)
+            };
+            this.ctx.fillText(enemyIcon[unit.type] || '?', pixel.x, pixel.y);
+            this.ctx.restore();
+        }
+        
         // Рисуем тело юнита
         this.hexGrid.drawCircle(unit.q, unit.r, size, {
             fill: color,
-            stroke: '#ffffff',
-            strokeWidth: 2
+            stroke: isEnemy ? '#ff0000' : '#ffffff',
+            strokeWidth: isEnemy ? 3 : 2
         });
         
         // Рисуем направление (если есть)
@@ -314,6 +394,54 @@ class GameRenderer {
         );
     }
     
+    drawEnemyAnthill(anthill) {
+        // Рисуем вражеский муравейник с особым выделением
+        const size = 30;
+        
+        // Рисуем красный пульсирующий круг
+        const time = Date.now() / 1000;
+        const pulse = Math.sin(time * 2) * 0.3 + 0.7;
+        
+        this.hexGrid.drawCircle(anthill.q, anthill.r, size * pulse, {
+            fill: 'rgba(255, 0, 0, 0.3)',
+            stroke: '#ff0000',
+            strokeWidth: 4
+        });
+        
+        // Рисуем центральную часть
+        this.hexGrid.drawCircle(anthill.q, anthill.r, size * 0.6, {
+            fill: '#8b0000',
+            stroke: '#ff0000',
+            strokeWidth: 2
+        });
+        
+        // Рисуем знак опасности
+        const pixel = this.hexGrid.hexToPixel(anthill.q, anthill.r);
+        this.ctx.save();
+        this.ctx.font = 'bold 20px Arial';
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText('!', pixel.x, pixel.y);
+        this.ctx.restore();
+        
+        // Добавляем в лог об обнаружении вражеского муравейника
+        if (!this.reportedEnemyAnthills) {
+            this.reportedEnemyAnthills = new Set();
+        }
+        const anthillKey = `${anthill.q},${anthill.r}`;
+        if (!this.reportedEnemyAnthills.has(anthillKey)) {
+            this.reportedEnemyAnthills.add(anthillKey);
+            // Отправляем событие для логирования
+            if (window.gameVisualizer) {
+                window.gameVisualizer.logManager.addMessage(
+                    `Enemy anthill discovered at (${anthill.q}, ${anthill.r})!`, 
+                    'enemy'
+                );
+            }
+        }
+    }
+    
     drawCargoIndicator(unit) {
         const pixel = this.hexGrid.hexToPixel(unit.q, unit.r);
         const size = 6 * this.hexGrid.zoom;
@@ -351,23 +479,40 @@ class GameRenderer {
     drawThreatIndicators() {
         if (!this.analysis || !this.analysis.threats) return;
         
+        // Рисуем линии угрозы от врагов к нашему муравейнику
+        const anthill = this.analysis.units?.anthill;
+        if (!anthill) return;
+        
         this.analysis.threats.threats.forEach(threat => {
             const enemy = threat.unit;
-            const pixel = this.hexGrid.hexToPixel(enemy.q, enemy.r);
             
-            // Рисуем индикатор уровня угрозы
-            const threatColor = threat.threatLevel > 2 ? this.colors.threatHigh :
-                               threat.threatLevel > 1 ? this.colors.threatMedium :
-                               this.colors.threatLow;
+            // Рисуем линию от врага к муравейнику
+            if (threat.distanceToAnthill < 10) {
+                const alpha = 1 - (threat.distanceToAnthill / 10);
+                this.ctx.save();
+                this.ctx.globalAlpha = alpha * 0.5;
+                
+                this.hexGrid.drawLine(enemy.q, enemy.r, anthill.q, anthill.r, {
+                    stroke: '#ff0000',
+                    strokeWidth: 2,
+                    dashArray: [3, 3]
+                });
+                
+                this.ctx.restore();
+            }
             
-            this.ctx.strokeStyle = threatColor;
-            this.ctx.lineWidth = 3;
-            this.ctx.strokeRect(
-                pixel.x - 15 * this.hexGrid.zoom,
-                pixel.y - 15 * this.hexGrid.zoom,
-                30 * this.hexGrid.zoom,
-                30 * this.hexGrid.zoom
-            );
+            // Рисуем пульсирующий круг вокруг непосредственных угроз
+            if (threat.distanceToAnthill <= 5) {
+                const time = Date.now() / 1000;
+                const pulse = Math.sin(time * 4) * 0.5 + 0.5;
+                const radius = (20 + pulse * 10) * this.hexGrid.zoom;
+                
+                this.hexGrid.drawCircle(enemy.q, enemy.r, radius, {
+                    fill: 'rgba(255, 0, 0, 0.1)',
+                    stroke: 'rgba(255, 0, 0, 0.8)',
+                    strokeWidth: 2
+                });
+            }
         });
     }
     
@@ -380,10 +525,7 @@ class GameRenderer {
         const tooltipInfo = this.getTooltipInfo(hex.q, hex.r);
         
         // Удаляем старый tooltip
-        const oldTooltip = document.querySelector('.tooltip');
-        if (oldTooltip) {
-            oldTooltip.remove();
-        }
+        this.hideTooltip();
         
         if (tooltipInfo) {
             const tooltip = document.createElement('div');
@@ -394,7 +536,8 @@ class GameRenderer {
             
             document.body.appendChild(tooltip);
             
-            setTimeout(() => {
+            // Store timeout ID for cleanup
+            this.tooltipTimeout = setTimeout(() => {
                 if (tooltip.parentNode) {
                     tooltip.remove();
                 }
@@ -402,20 +545,87 @@ class GameRenderer {
         }
     }
     
+    hideTooltip() {
+        // Remove any existing tooltip
+        const oldTooltip = document.querySelector('.tooltip');
+        if (oldTooltip) {
+            oldTooltip.remove();
+        }
+        
+        // Clear any pending timeout
+        if (this.tooltipTimeout) {
+            clearTimeout(this.tooltipTimeout);
+            this.tooltipTimeout = null;
+        }
+    }
+    
     getTooltipInfo(q, r) {
         if (!this.gameState) return null;
         
         const info = [];
-        info.push(`Hex: ${q}, ${r}`);
+        info.push(`<strong>Coordinates:</strong> (${q}, ${r})`);
+        
+        // Добавляем информацию о типе гекса
+        const hexType = this.getHexType(q, r);
+        const hexInfo = this.hexTypes[hexType];
+        
+        // Получаем реальную информацию о гексе из API
+        let realHexInfo = null;
+        if (this.gameState && this.gameState.map && Array.isArray(this.gameState.map)) {
+            realHexInfo = this.gameState.map.find(hex => hex.q === q && hex.r === r);
+        }
+        
+        if (hexInfo) {
+            info.push(`<strong>Hex Type:</strong> ${hexInfo.name}`);
+            
+            // Показываем реальную стоимость из API, если доступна
+            if (realHexInfo && realHexInfo.cost !== undefined) {
+                if (realHexInfo.cost >= 100) {
+                    info.push(`Move Cost: Impassable (${realHexInfo.cost})`);
+                } else {
+                    info.push(`Move Cost: ${realHexInfo.cost} MP`);
+                }
+            } else if (hexInfo.moveCost === Infinity) {
+                info.push(`Move Cost: Impassable`);
+            } else {
+                info.push(`Move Cost: ${hexInfo.moveCost} MP`);
+            }
+            
+            if (hexInfo.damage) {
+                info.push(`<span style="color: #ff6666;">Damage: ${hexInfo.damage}</span>`);
+            }
+            
+            // Показываем тип из API для отладки
+            if (realHexInfo && realHexInfo.type !== undefined) {
+                info.push(`<span style="color: #888888;">API Type: ${realHexInfo.type}</span>`);
+            }
+        }
         
         // Проверяем юнитов
         if (this.gameState.ants) {
             const unit = this.gameState.ants.find(ant => ant.q === q && ant.r === r);
             if (unit) {
                 const unitType = this.unitTypes[unit.type] || 'unknown';
-                info.push(`My Unit: ${unitType}`);
+                info.push(`<strong>My Unit: ${unitType}</strong>`);
                 if (unit.health) info.push(`Health: ${unit.health}`);
                 if (unit.cargo) info.push(`Cargo: ${unit.cargo}`);
+                
+                // Добавляем информацию о назначении
+                const assignment = this.unitAssignments[unit.id];
+                if (assignment) {
+                    info.push(`<hr>`);
+                    info.push(`<strong>Assignment:</strong>`);
+                    info.push(`Type: ${assignment.type}`);
+                    info.push(`Priority: ${assignment.priority}`);
+                    if (assignment.target) {
+                        if (assignment.target.q !== undefined) {
+                            info.push(`Target: (${assignment.target.q}, ${assignment.target.r})`);
+                        }
+                    }
+                    if (assignment.resource_type) {
+                        info.push(`Resource: ${this.resourceTypes[assignment.resource_type] || assignment.resource_type}`);
+                    }
+                }
             }
         }
         
@@ -442,8 +652,30 @@ class GameRenderer {
         if (this.gameState.home && Array.isArray(this.gameState.home)) {
             const isAnthill = this.gameState.home.some(homeHex => homeHex.q === q && homeHex.r === r);
             if (isAnthill) {
-                info.push(`Anthill`);
+                info.push(`<strong>Our Anthill</strong>`);
             }
+        }
+        
+        // Подсчитываем количество юнитов и ресурсов на гексе
+        if (info.length > 1) {
+            info.push(`<hr style="margin: 5px 0;">`);
+            
+            // Количество наших юнитов
+            const myUnitsCount = this.gameState.ants ? 
+                this.gameState.ants.filter(ant => ant.q === q && ant.r === r).length : 0;
+            
+            // Количество вражеских юнитов
+            const enemyUnitsCount = this.gameState.enemies ? 
+                this.gameState.enemies.filter(enemy => enemy.q === q && enemy.r === r).length : 0;
+            
+            // Количество ресурсов
+            const resourcesCount = this.gameState.food ? 
+                this.gameState.food.filter(food => food.q === q && food.r === r).length : 0;
+            
+            info.push(`<strong>Summary:</strong>`);
+            if (myUnitsCount > 0) info.push(`Our units: ${myUnitsCount}`);
+            if (enemyUnitsCount > 0) info.push(`Enemy units: ${enemyUnitsCount}`);
+            if (resourcesCount > 0) info.push(`Resources: ${resourcesCount}`);
         }
         
         return info.length > 1 ? info.join('<br>') : null;
@@ -472,6 +704,67 @@ class GameRenderer {
     getResourceCalories(resourceType) {
         const caloriesMap = { 1: 10, 2: 25, 3: 60 }; // apple, bread, nectar
         return caloriesMap[resourceType] || 0;
+    }
+    
+    getHexType(q, r) {
+        // Сначала проверяем, является ли этот гекс муравейником
+        if (this.gameState && this.gameState.home && Array.isArray(this.gameState.home)) {
+            const isAnthill = this.gameState.home.some(homeHex => homeHex.q === q && homeHex.r === r);
+            if (isAnthill) return 1; // anthill
+        }
+        
+        // Проверяем информацию о типах гексов из поля map
+        if (this.gameState && this.gameState.map && Array.isArray(this.gameState.map)) {
+            const hexInfo = this.gameState.map.find(hex => hex.q === q && hex.r === r);
+            if (hexInfo && hexInfo.type !== undefined) {
+                // API может использовать другую нумерацию типов, нужно их правильно сопоставить
+                return this.mapApiTypeToDisplayType(hexInfo.type, hexInfo.cost);
+            }
+        }
+        
+        return 2; // По умолчанию empty, если информация не найдена
+    }
+    
+    mapApiTypeToDisplayType(apiType, cost) {
+        // Более точное сопоставление типов на основе анализа API данных
+        // API Type 1: Anthill areas (но мы их проверяем отдельно)
+        // API Type 2: Empty/normal terrain
+        // API Type 3: Mud (cost 2)
+        // API Type 4: Acid (cost 1, but deals damage) 
+        // API Type 5: Water/obstacles (high cost)
+        
+        // Проверяем сначала стоимость движения
+        if (cost >= 30) {
+            return 5; // rocks/water - impassable или очень дорогие
+        }
+        
+        // Затем проверяем тип из API
+        switch (apiType) {
+            case 1:
+                // API Type 1 - может быть специальная местность вокруг муравейника
+                return cost === 1 ? 2 : 3; // empty если дешево, иначе mud
+            case 2:
+                // API Type 2 - обычная местность  
+                return 2; // empty
+            case 3:
+                // API Type 3 - грязь
+                return 3; // mud
+            case 4:
+                // API Type 4 - кислота
+                return 4; // acid
+            case 5:
+                // API Type 5 - препятствия
+                return cost > 10 ? 5 : 3; // rocks если дорого, иначе mud
+            default:
+                // Неизвестный тип - определяем по стоимости
+                if (cost >= 10) {
+                    return 5; // rocks
+                } else if (cost === 2) {
+                    return 3; // mud  
+                } else {
+                    return 2; // empty
+                }
+        }
     }
     
     resize() {

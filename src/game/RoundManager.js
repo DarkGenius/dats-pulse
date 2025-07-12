@@ -169,13 +169,13 @@ class RoundManager {
     async tryRegisterForCurrentRound(teamName) {
         if (!this.currentRound) {
             logger.warn('No current round active for registration');
-            return false;
+            return null;
         }
 
         try {
-            await this.apiClient.register(teamName);
+            const registrationInfo = await this.apiClient.register(teamName);
             logger.info(`Successfully registered for round: ${this.currentRound.name}`);
-            return true;
+            return registrationInfo;
         } catch (error) {
             logger.error('Registration failed:', error);
             
@@ -183,7 +183,7 @@ class RoundManager {
             if (error.message.includes('lobby ended') || error.message.includes('too late')) {
                 logger.info('Lobby closed, will wait for next round');
                 this.currentRound = null; // Сбрасываем текущий раунд
-                return false;
+                return null;
             }
             
             throw error;

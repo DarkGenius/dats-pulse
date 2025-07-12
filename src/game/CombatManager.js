@@ -107,15 +107,30 @@ class CombatManager {
         const actions = [];
         const combatReadiness = strategy.combatStrategy.readiness;
         
+        // Функция для преобразования формирования в отдельные действия для каждого юнита
+        const expandFormation = (formation) => {
+            if (!formation || !formation.units) {
+                return [];
+            }
+            
+            return formation.units.map(unit => ({
+                type: 'formation_action',
+                formation: formation.formation,
+                unit_id: unit.id,
+                position: formation.positions ? formation.positions[unit.id] : null,
+                priority: formation.priority || 'medium'
+            }));
+        };
+        
         if (combatReadiness.recommendation === 'attack') {
             const offensiveFormation = this.planOffensiveFormation(analysis);
             if (offensiveFormation) {
-                actions.push(offensiveFormation);
+                actions.push(...expandFormation(offensiveFormation));
             }
         } else if (combatReadiness.recommendation === 'hold') {
             const defensiveFormation = this.planDefensiveFormation(analysis);
             if (defensiveFormation) {
-                actions.push(defensiveFormation);
+                actions.push(...expandFormation(defensiveFormation));
             }
         }
         
@@ -123,7 +138,7 @@ class CombatManager {
         if (immediateThreats.length > 0) {
             const emergencyFormation = this.planEmergencyFormation(analysis);
             if (emergencyFormation) {
-                actions.push(emergencyFormation);
+                actions.push(...expandFormation(emergencyFormation));
             }
         }
         
@@ -505,14 +520,17 @@ class CombatManager {
         targets.forEach(target => {
             const tactic = this.selectAttackTactic(target, analysis);
             
-            if (tactic) {
-                actions.push({
-                    type: 'tactical_action',
-                    tactic: tactic.type,
-                    target: target.unit,
-                    units: tactic.units,
-                    plan: tactic.plan,
-                    priority: 'high'
+            if (tactic && tactic.units) {
+                // Создаем отдельное действие для каждого юнита
+                tactic.units.forEach(unit => {
+                    actions.push({
+                        type: 'tactical_action',
+                        tactic: tactic.type,
+                        target: target.unit,
+                        unit_id: unit.id,
+                        plan: tactic.plan,
+                        priority: 'high'
+                    });
                 });
             }
         });
@@ -536,12 +554,15 @@ class CombatManager {
         
         const retreatPlan = this.createRetreatPlan(myUnits, anthill, analysis);
         
-        actions.push({
-            type: 'tactical_action',
-            tactic: this.tactics.RETREAT,
-            units: myUnits,
-            plan: retreatPlan,
-            priority: 'critical'
+        // Создаем отдельное действие для каждого юнита
+        myUnits.forEach(unit => {
+            actions.push({
+                type: 'tactical_action',
+                tactic: this.tactics.RETREAT,
+                unit_id: unit.id,
+                plan: retreatPlan,
+                priority: 'critical'
+            });
         });
         
         return actions;
@@ -564,15 +585,18 @@ class CombatManager {
         
         const holdingPositions = this.calculateHoldingPositions(combatUnits, analysis);
         
-        actions.push({
-            type: 'tactical_action',
-            tactic: this.tactics.DEFENSIVE,
-            units: combatUnits,
-            plan: {
-                type: 'hold_position',
-                positions: holdingPositions
-            },
-            priority: 'medium'
+        // Создаем отдельное действие для каждого боевого юнита
+        combatUnits.forEach(unit => {
+            actions.push({
+                type: 'tactical_action',
+                tactic: this.tactics.DEFENSIVE,
+                unit_id: unit.id,
+                plan: {
+                    type: 'hold_position',
+                    position: holdingPositions[unit.id] || null
+                },
+                priority: 'medium'
+            });
         });
         
         return actions;
@@ -699,9 +723,9 @@ class CombatManager {
         const targets = strategy.combatStrategy.targets;
         
         targets.forEach(target => {
-            const targetingAction = this.createTargetingAction(target, analysis);
-            if (targetingAction) {
-                actions.push(targetingAction);
+            const targetingActions = this.createTargetingAction(target, analysis);
+            if (targetingActions) {
+                actions.push(...targetingActions); // Разворачиваем массив действий
             }
         });
         
@@ -721,13 +745,19 @@ class CombatManager {
             return null;
         }
         
-        return {
-            type: 'targeting_action',
-            target: target.unit,
-            units: assignedUnits,
-            priority: this.calculateTargetPriority(target, analysis),
-            approach: this.determineApproach(target, assignedUnits, analysis)
-        };
+        // Создаем отдельные действия для каждого назначенного юнита
+        const actions = [];
+        assignedUnits.forEach(unit => {
+            actions.push({
+                type: 'targeting_action',
+                target: target.unit,
+                unit_id: unit.id,
+                priority: this.calculateTargetPriority(target, analysis),
+                approach: this.determineApproach(target, [unit], analysis)
+            });
+        });
+        
+        return actions; // Возвращаем массив действий
     }
 
     /**

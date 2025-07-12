@@ -3,15 +3,12 @@ class GameVisualizer {
         this.canvas = document.getElementById('gameCanvas');
         this.renderer = new GameRenderer(this.canvas);
         this.statsUpdater = new StatsUpdater();
+        this.logManager = new LogManager('log-container');
         this.websocket = null;
         this.isConnected = false;
         this.isInitialLoad = true;
         
         this.connectionIndicator = document.getElementById('connection-indicator');
-        
-        // Для обновления таймера ожидания
-        this.waitingData = null;
-        this.countdownInterval = null;
         
         this.init();
     }
@@ -27,6 +24,13 @@ class GameVisualizer {
                 this.connectWebSocket();
             }
         }, 5000);
+        
+        // Делаем визуализатор глобально доступным для других компонентов
+        window.gameVisualizer = this;
+        
+        // Инициализируем предыдущие состояния для детекции изменений
+        this.previousGameState = null;
+        this.previousAnalysis = null;
     }
     
     setupCanvas() {
@@ -95,7 +99,7 @@ class GameVisualizer {
         switch (data.type) {
             case 'gameState':
             case 'gameUpdate':
-                this.updateGameState(data.gameState, data.analysis, data.strategy);
+                this.updateGameState(data.gameState, data.analysis, data.strategy, data.unitAssignments);
                 if (this.isInitialLoad && data.gameState) {
                     this.centerOnHome(data.gameState);
                     this.isInitialLoad = false;
@@ -104,24 +108,61 @@ class GameVisualizer {
             case 'roundStatus':
                 this.updateRoundStatus(data);
                 break;
+            case 'lobbyStatus':
+                this.updateLobbyStatus(data);
+                break;
             case 'error':
                 console.error('Game error:', data.message);
                 break;
             case 'status':
-                console.log('Game status:', data.message);
+                this.logManager.addMessage(data.message, 'system');
+                break;
+            case 'log':
+                this.logManager.addMessage(data.message, data.logType);
                 break;
             default:
                 console.warn('Unknown message type:', data.type);
         }
     }
     
-    updateGameState(gameState, analysis, strategy) {
-        this.renderer.updateGameState(gameState, analysis);
+    updateGameState(gameState, analysis, strategy, unitAssignments) {
+        // Детекция боевых событий
+        this.detectCombatEvents(gameState, analysis);
+        
+        this.renderer.updateGameState(gameState, analysis, unitAssignments);
         this.statsUpdater.updateStats(gameState, analysis, strategy);
         this.statsUpdater.updateHistory(gameState);
         
         // Скрываем оверлей ожидания, если игра началась
         this.hideWaitingOverlay();
+        
+        // Сохраняем состояние для следующего сравнения
+        this.previousGameState = gameState;
+        this.previousAnalysis = analysis;
+    }
+
+    updateLobbyStatus(data) {
+        if (data.waiting) {
+            this.showWaitingOverlay({
+                message: 'Waiting for game to start...',
+                countdown: this.formatCountdown(data.remainingTime)
+            });
+        } else {
+            this.hideWaitingOverlay();
+        }
+    }
+    
+    formatCountdown(seconds) {
+        if (!seconds || seconds < 0) return '';
+        
+        const minutes = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        
+        if (minutes > 0) {
+            return `${minutes}m ${secs}s`;
+        } else {
+            return `${secs}s`;
+        }
     }
 
     centerOnHome(gameState) {
@@ -134,12 +175,9 @@ class GameVisualizer {
     
     updateRoundStatus(data) {
         if (data.waiting) {
-            this.waitingData = data.status;
             this.showWaitingOverlay(data.status);
-            this.startCountdownTimer();
         } else {
             this.hideWaitingOverlay();
-            this.stopCountdownTimer();
         }
     }
     
@@ -155,9 +193,9 @@ class GameVisualizer {
             message.textContent = status.message;
         }
         
-        // Начальное отображение таймера
-        if (status.startAt) {
-            this.updateCountdown();
+        if (status.countdown) {
+            countdown.textContent = status.countdown;
+            countdown.classList.add('countdown-pulse');
         } else {
             countdown.textContent = '';
             countdown.classList.remove('countdown-pulse');
@@ -165,8 +203,8 @@ class GameVisualizer {
         
         if (status.roundName) {
             roundInfo.innerHTML = `
-                <h3>Следующий раунд: ${status.roundName}</h3>
-                ${status.startAt ? `<p>Начало: ${new Date(status.startAt).toLocaleString()}</p>` : ''}
+                <h3>Next Round: ${status.roundName}</h3>
+                ${status.startAt ? `<p>Starts: ${new Date(status.startAt).toLocaleString()}</p>` : ''}
             `;
         } else {
             roundInfo.innerHTML = '';
@@ -176,75 +214,6 @@ class GameVisualizer {
     hideWaitingOverlay() {
         const overlay = document.getElementById('round-waiting-overlay');
         overlay.classList.add('hidden');
-    }
-    
-    startCountdownTimer() {
-        this.stopCountdownTimer(); // Останавливаем предыдущий таймер
-        
-        if (!this.waitingData || !this.waitingData.startAt) {
-            return;
-        }
-        
-        this.countdownInterval = setInterval(() => {
-            this.updateCountdown();
-        }, 1000);
-    }
-    
-    stopCountdownTimer() {
-        if (this.countdownInterval) {
-            clearInterval(this.countdownInterval);
-            this.countdownInterval = null;
-        }
-    }
-    
-    updateCountdown() {
-        if (!this.waitingData || !this.waitingData.startAt) {
-            return;
-        }
-        
-        const now = new Date();
-        const startTime = new Date(this.waitingData.startAt);
-        const timeUntilStart = startTime.getTime() - now.getTime();
-        
-        if (timeUntilStart <= 0) {
-            this.displayCountdown('Раунд должен начаться...');
-            return;
-        }
-        
-        const countdown = this.formatCountdown(timeUntilStart);
-        this.displayCountdown(countdown);
-    }
-    
-    formatCountdown(milliseconds) {
-        const totalSeconds = Math.ceil(milliseconds / 1000);
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds % 3600) / 60);
-        const seconds = totalSeconds % 60;
-        
-        if (hours > 0) {
-            return `${hours}h ${minutes}m ${seconds}s`;
-        } else if (minutes > 0) {
-            return `${minutes}m ${seconds}s`;
-        } else {
-            return `${seconds}s`;
-        }
-    }
-    
-    displayCountdown(text) {
-        const countdown = document.getElementById('countdown-timer');
-        if (countdown) {
-            countdown.textContent = text;
-            
-            // Добавляем пульсацию для последних 10 секунд
-            if (text.includes('s') && !text.includes('m') && !text.includes('h')) {
-                const seconds = parseInt(text.replace('s', ''));
-                if (seconds <= 10) {
-                    countdown.classList.add('countdown-pulse');
-                } else {
-                    countdown.classList.remove('countdown-pulse');
-                }
-            }
-        }
     }
     
     updateConnectionStatus(connected) {
@@ -315,7 +284,7 @@ class GameVisualizer {
     }
     
     resetView() {
-        this.renderer.showVisionRange = false;
+        this.renderer.showVisionRange = true;
         this.renderer.showMovementPaths = true;
         this.renderer.followUnits = false;
         this.renderer.hexGrid.zoom = 1;
@@ -373,6 +342,130 @@ class GameVisualizer {
         `;
         
         alert(helpText);
+    }
+    
+    /**
+     * Детектирует боевые события, изменения в юнитах и логирует их.
+     * @param {Object} gameState - Текущее состояние игры
+     * @param {Object} analysis - Анализ игрового состояния
+     */
+    detectCombatEvents(gameState, analysis) {
+        if (!this.previousGameState || !gameState) return;
+        
+        // Детекция новых врагов
+        this.detectNewEnemies(gameState);
+        
+        // Детекция потерянных юнитов (смерть)
+        this.detectLostUnits(gameState);
+        
+        // Детекция уничтоженных врагов
+        this.detectDefeatedEnemies(gameState);
+        
+        // Детекция изменений здоровья (урон)
+        this.detectHealthChanges(gameState);
+        
+        // Детекция новых угроз
+        this.detectNewThreats(analysis);
+        
+        // Детекция обнаружения вражеских муравейников
+        this.detectEnemyAnthillDiscovery(gameState);
+    }
+    
+    detectNewEnemies(gameState) {
+        if (!this.previousGameState.enemies || !gameState.enemies) return;
+        
+        const prevEnemyIds = new Set(this.previousGameState.enemies.map(e => `${e.q},${e.r},${e.type}`));
+        const newEnemies = gameState.enemies.filter(enemy => 
+            !prevEnemyIds.has(`${enemy.q},${enemy.r},${enemy.type}`)
+        );
+        
+        newEnemies.forEach(enemy => {
+            if (enemy.type === 0) {
+                this.logManager.addEnemyEvent(`Enemy anthill discovered at (${enemy.q}, ${enemy.r})!`);
+            } else {
+                const unitTypes = { 1: 'Worker', 2: 'Soldier', 3: 'Scout' };
+                const unitType = unitTypes[enemy.type] || 'Unit';
+                this.logManager.addEnemyEvent(`Enemy ${unitType} spotted at (${enemy.q}, ${enemy.r})`);
+            }
+        });
+    }
+    
+    detectLostUnits(gameState) {
+        if (!this.previousGameState.ants || !gameState.ants) return;
+        
+        const currentUnitIds = new Set(gameState.ants.map(u => u.id));
+        const lostUnits = this.previousGameState.ants.filter(unit => 
+            !currentUnitIds.has(unit.id)
+        );
+        
+        lostUnits.forEach(unit => {
+            const unitTypes = { 1: 'Worker', 2: 'Soldier', 3: 'Scout' };
+            const unitType = unitTypes[unit.type] || 'Unit';
+            this.logManager.addDeathEvent(`Our ${unitType} (ID: ${unit.id}) was destroyed at (${unit.q}, ${unit.r})`);
+        });
+    }
+    
+    detectDefeatedEnemies(gameState) {
+        if (!this.previousGameState.enemies || !gameState.enemies) return;
+        
+        const currentEnemyIds = new Set(gameState.enemies.map(e => `${e.q},${e.r},${e.type}`));
+        const defeatedEnemies = this.previousGameState.enemies.filter(enemy => 
+            !currentEnemyIds.has(`${enemy.q},${enemy.r},${enemy.type}`) && enemy.type !== 0
+        );
+        
+        defeatedEnemies.forEach(enemy => {
+            const unitTypes = { 1: 'Worker', 2: 'Soldier', 3: 'Scout' };
+            const unitType = unitTypes[enemy.type] || 'Unit';
+            this.logManager.addCombatEvent(`Enemy ${unitType} defeated at (${enemy.q}, ${enemy.r})`);
+        });
+    }
+    
+    detectHealthChanges(gameState) {
+        if (!this.previousGameState.ants || !gameState.ants) return;
+        
+        const prevUnitsMap = new Map();
+        this.previousGameState.ants.forEach(unit => {
+            prevUnitsMap.set(unit.id, unit);
+        });
+        
+        gameState.ants.forEach(unit => {
+            const prevUnit = prevUnitsMap.get(unit.id);
+            if (prevUnit && prevUnit.health && unit.health && unit.health < prevUnit.health) {
+                const damage = prevUnit.health - unit.health;
+                const unitTypes = { 1: 'Worker', 2: 'Soldier', 3: 'Scout' };
+                const unitType = unitTypes[unit.type] || 'Unit';
+                this.logManager.addDamageEvent(`Our ${unitType} (ID: ${unit.id}) took ${damage} damage (${unit.health}/${prevUnit.health})`);
+            }
+        });
+    }
+    
+    detectNewThreats(analysis) {
+        if (!this.previousAnalysis?.threats || !analysis?.threats) return;
+        
+        const prevThreatCount = this.previousAnalysis.threats.threats?.length || 0;
+        const currentThreatCount = analysis.threats.threats?.length || 0;
+        
+        if (currentThreatCount > prevThreatCount) {
+            const newThreatCount = currentThreatCount - prevThreatCount;
+            this.logManager.addMessage(`⚠️ ${newThreatCount} new threat(s) detected! Total threats: ${currentThreatCount}`, 'warning');
+        }
+        
+        // Детекция критических угроз
+        const immediateThreatCount = analysis.threats.immediateThreats?.length || 0;
+        const prevImmediateThreatCount = this.previousAnalysis.threats.immediateThreats?.length || 0;
+        
+        if (immediateThreatCount > prevImmediateThreatCount) {
+            this.logManager.addMessage(`🚨 IMMEDIATE THREAT! ${immediateThreatCount} enemies near our anthill!`, 'error');
+        }
+    }
+    
+    detectEnemyAnthillDiscovery(gameState) {
+        const prevAnthills = this.previousGameState.discoveredEnemyAnthills?.length || 0;
+        const currentAnthills = gameState.discoveredEnemyAnthills?.length || 0;
+        
+        if (currentAnthills > prevAnthills) {
+            this.logManager.addMessage(`🏴 Enemy anthill discovered! Total found: ${currentAnthills}`, 'enemy');
+        }
     }
 }
 

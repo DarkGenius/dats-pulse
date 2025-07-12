@@ -2,6 +2,7 @@ const https = require("https");
 const http = require("http");
 const querystring = require("querystring");
 const logger = require("../utils/Logger");
+const RateLimiter = require("../utils/RateLimiter");
 
 class ApiClient {
   constructor(baseUrl, token) {
@@ -10,6 +11,9 @@ class ApiClient {
     this.headers = {
       "Content-Type": "application/json",
     };
+    
+    // Инициализация rate limiter для 3 запросов в секунду
+    this.rateLimiter = new RateLimiter(3, 'GameAPI');
 
     if (token) {
       this.headers["X-Auth-Token"] = token;
@@ -26,14 +30,46 @@ class ApiClient {
   async register(teamName) {
     // Регистрация происходит только через токен авторизации без тела запроса
     logger.debug(`API: Registering team via /register endpoint (token-based)`);
-    return await this.makeRequest("POST", "/register");
+    return await this.rateLimiter.execute(() => 
+      this.makeRequest("POST", "/register")
+    );
   }
 
   async getGameState() {
     logger.debug("API: Requesting game state from /arena");
-    const gameState = await this.makeRequest("GET", "/arena");
+    const gameState = await this.rateLimiter.execute(() => 
+      this.makeRequest("GET", "/arena")
+    );
     if (gameState) {
-      logger.debug(`API: Received game state - Turn: ${gameState.turnNo || 'unknown'}, Units: ${gameState.ants?.length || 0}, Resources: ${gameState.food?.length || 0}`);
+      // Analyze ant types
+      let antDetails = {};
+      if (gameState.ants) {
+        const antTypes = gameState.ants.reduce((acc, ant) => {
+          acc[ant.type] = (acc[ant.type] || 0) + 1;
+          return acc;
+        }, {});
+        antDetails = {
+          total: gameState.ants.length,
+          byType: antTypes,
+          actualUnits: gameState.ants.filter(a => a.type !== 0).length
+        };
+      }
+      
+      logger.debug(`API: Received game state - Turn: ${gameState.turnNo || 'unknown'}, Ants: ${JSON.stringify(antDetails)}, MyUnits: ${gameState.myUnits?.length || 0}, Resources: ${gameState.food?.length || 0}`);
+      
+      // Log more details for debugging
+      if (!gameState.ants && !gameState.myUnits) {
+        logger.debug('API: No units found in response. Full response structure:', {
+          hasHome: !!gameState.home,
+          homeCount: gameState.home?.length || 0,
+          hasFood: !!gameState.food,
+          foodCount: gameState.food?.length || 0,
+          hasScores: !!gameState.scores,
+          scoresCount: gameState.scores?.length || 0,
+          turnNo: gameState.turnNo,
+          responseKeys: Object.keys(gameState)
+        });
+      }
     } else {
       logger.warn("API: Received empty game state");
     }
@@ -50,13 +86,30 @@ class ApiClient {
     //     }
     //   ]
     // }
-    const moveCommands = moves.map(move => ({
-      ant: move.unit_id || move.antId,
-      path: [{
-        q: move.move?.q || move.q,
-        r: move.move?.r || move.r
-      }]
-    }));
+    const moveCommands = moves.map(move => {
+      // Handle different move formats
+      const unitId = move.unit_id || move.ant_id || move.antId;
+      let movePath;
+      
+      if (move.path && Array.isArray(move.path)) {
+        // New format: { unit_id, path: [{q, r}, ...] }
+        movePath = move.path;
+      } else if (move.move) {
+        // Old format: { unit_id, move: {q, r} }
+        movePath = [move.move];
+      } else if (move.q !== undefined && move.r !== undefined) {
+        // Direct format: { q, r }
+        movePath = [{ q: move.q, r: move.r }];
+      } else {
+        logger.warn('Move has no valid path or position:', move);
+        return null;
+      }
+      
+      return {
+        ant: unitId,
+        path: movePath
+      };
+    }).filter(Boolean); // Remove null entries
     
     const payload = {
       moves: moveCommands
@@ -65,17 +118,23 @@ class ApiClient {
     logger.debug(`API: Sending ${moveCommands.length} moves to /move`);
     logger.debug("API: Move payload:", JSON.stringify(payload, null, 2));
     
-    const response = await this.makeRequest("POST", "/move", payload);
+    const response = await this.rateLimiter.execute(() => 
+      this.makeRequest("POST", "/move", payload)
+    );
     logger.debug("API: Move response:", response);
     return response;
   }
 
   async getLogs() {
-    return await this.makeRequest("GET", "/logs");
+    return await this.rateLimiter.execute(() => 
+      this.makeRequest("GET", "/logs")
+    );
   }
 
   async getRounds() {
-    return await this.makeRequest("GET", "/rounds");
+    return await this.rateLimiter.execute(() => 
+      this.makeRequest("GET", "/rounds")
+    );
   }
 
   async makeRequest(method, endpoint, data = null) {

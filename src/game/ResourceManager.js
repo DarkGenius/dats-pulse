@@ -32,29 +32,117 @@ class ResourceManager {
      * Планирует сбор ресурсов на основе анализа игры и стратегии.
      * @param {Object} analysis - Анализ состояния игры
      * @param {Object} strategy - Стратегия игры
+     * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
      * @returns {Object} Объект с массивом действий по сбору ресурсов
      */
-    planResourceCollection(analysis, strategy) {
+    planResourceCollection(analysis, strategy, resourceAssignmentManager = null) {
         const actions = [];
+        
+        // Если используется новая система назначений, работаем через неё
+        if (resourceAssignmentManager) {
+            return this.planResourceCollectionWithReservations(analysis, strategy, resourceAssignmentManager);
+        }
+        
+        // Старая логика для совместимости
         const availableUnits = this.getAvailableUnits(analysis);
         const prioritizedResources = this.prioritizeResources(analysis, strategy);
         
         this.updateResourceAssignments(analysis);
         
         prioritizedResources.forEach(resourceInfo => {
-            const assignment = this.assignUnitsToResource(
+            const assignments = this.assignUnitsToResource(
                 resourceInfo,
                 availableUnits,
                 analysis,
                 strategy
             );
             
-            if (assignment) {
-                actions.push(assignment);
-                this.resourceAssignments.set(resourceInfo.resource.id, assignment);
+            if (assignments && assignments.length > 0) {
+                actions.push(...assignments);
             }
         });
         
+        const logisticsActions = this.planLogistics(analysis, strategy);
+        actions.push(...logisticsActions);
+        
+        return { actions };
+    }
+
+    /**
+     * Планирует сбор ресурсов с использованием централизованной системы резервирования.
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия игры
+     * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
+     * @returns {Object} Объект с массивом действий по сбору ресурсов
+     */
+    planResourceCollectionWithReservations(analysis, strategy, resourceAssignmentManager) {
+        const actions = [];
+        
+        // Получаем доступные юниты (не назначенные на ресурсы и не в бою)
+        const availableUnits = this.getAvailableUnitsForReservation(analysis, resourceAssignmentManager);
+        
+        // Получаем незарезервированные ресурсы
+        const availableResources = resourceAssignmentManager.getAvailableResources(analysis.resources.visible);
+        
+        if (availableUnits.length === 0 || availableResources.length === 0) {
+            logger.debug(`No resource collection: ${availableUnits.length} available units, ${availableResources.length} available resources`);
+            return { actions };
+        }
+        
+        // Приоритизируем доступные ресурсы
+        const prioritizedResources = this.prioritizeAvailableResources(availableResources, analysis, strategy);
+        
+        // Назначаем юнитов на ресурсы через систему резервирования
+        prioritizedResources.forEach(resourceInfo => {
+            const bestUnit = this.findBestUnitForResource(resourceInfo.resource, availableUnits, analysis);
+            
+            if (bestUnit) {
+                const priority = this.calculateReservationPriority(bestUnit, resourceInfo.resource, analysis, strategy);
+                
+                // Пытаемся зарезервировать ресурс
+                const reserved = resourceAssignmentManager.reserveResource(
+                    bestUnit.id,
+                    resourceInfo.resource,
+                    priority,
+                    {
+                        resourceType: this.foodTypeNames[resourceInfo.resource.type] || 'unknown',
+                        estimatedValue: this.resourceValues[resourceInfo.resource.type] || 0,
+                        distance: this.calculateDistance(bestUnit, resourceInfo.resource)
+                    }
+                );
+                
+                if (reserved) {
+                    // Удаляем юнита из списка доступных
+                    const unitIndex = availableUnits.findIndex(u => u.id === bestUnit.id);
+                    if (unitIndex >= 0) {
+                        availableUnits.splice(unitIndex, 1);
+                    }
+                    
+                    // Создаем действие сбора ресурса
+                    const gatherAction = {
+                        type: 'gather',
+                        unit_id: bestUnit.id,
+                        resource_id: resourceInfo.resource.id,
+                        resource_type: this.foodTypeNames[resourceInfo.resource.type] || 'unknown',
+                        priority: priority,
+                        target: resourceInfo.resource
+                    };
+                    
+                    actions.push(gatherAction);
+                    
+                    logger.info(`💎 Unit ${bestUnit.id} assigned to collect ${gatherAction.resource_type} at (${resourceInfo.resource.q}, ${resourceInfo.resource.r}) with priority ${priority}`);
+                }
+            }
+        });
+        
+        // Попытка переназначить освободившиеся ресурсы
+        resourceAssignmentManager.reassignOrphanedResources(
+            availableUnits,
+            analysis.resources.visible,
+            (unit, resource) => this.calculateReservationPriority(unit, resource, analysis, strategy)
+        );
+        
+        // Планируем логистику
         const logisticsActions = this.planLogistics(analysis, strategy);
         actions.push(...logisticsActions);
         
@@ -113,34 +201,39 @@ class ResourceManager {
         const phase = strategy.phase;
         
         if (resource.type === this.foodTypes.NECTAR) {
-            priority *= 3.0;
+            // NECTAR is the highest priority - 60 calories per unit!
+            priority *= 5.0;
             
             const distance = this.calculateNearestDistance(resource, analysis);
             if (distance <= 6) {
-                priority *= 2.0;
+                priority *= 3.0; // Even higher priority if close
             }
         } else if (resource.type === this.foodTypes.BREAD) {
-            priority *= 2.0;
+            // BREAD is second priority - 25 calories per unit
+            priority *= 2.5;
             
             const distance = this.calculateNearestDistance(resource, analysis);
             if (distance <= 4) {
-                priority *= 1.5;
+                priority *= 1.8;
             }
         } else if (resource.type === this.foodTypes.APPLE) {
+            // APPLE is lowest priority - only 10 calories per unit
             priority *= 1.0;
         }
         
-        if (phase === 'early') {
+        // NECTAR gets additional priority bonuses in all phases
+        if (resource.type === this.foodTypes.NECTAR) {
+            if (phase === 'early') {
+                priority *= 1.5; // Even in early game, nectar is valuable
+            } else if (phase === 'mid') {
+                priority *= 2.0; // Higher priority in mid game
+            } else if (phase === 'late') {
+                priority *= 2.5; // Maximum priority in late game
+            }
+        } else if (phase === 'early') {
+            // In early game, also prioritize bread for steady income
             if (resource.type === this.foodTypes.BREAD) {
                 priority *= 1.5;
-            }
-        } else if (phase === 'mid') {
-            if (resource.type === this.foodTypes.NECTAR) {
-                priority *= 1.3;
-            }
-        } else if (phase === 'late') {
-            if (resource.type === this.foodTypes.NECTAR) {
-                priority *= 1.8;
             }
         }
         
@@ -232,19 +325,19 @@ class ResourceManager {
             return null;
         }
         
-        const assignment = {
-            resource: resource,
-            units: bestUnits,
-            strategy: this.determineCollectionStrategy(resource, bestUnits, analysis),
-            estimatedYield: this.calculateEstimatedYield(resource, bestUnits),
-            safety: resourceInfo.priority
-        };
-        
-        bestUnits.forEach(unit => {
+        const assignments = bestUnits.map(unit => {
+            const assignment = {
+                type: 'gather',
+                unit_id: unit.id,
+                resource_id: resource.id,
+                resource_type: this.foodTypeNames[resource.type] || 'unknown',
+                priority: resourceInfo.priority
+            };
             this.markUnitAsAssigned(unit.id, assignment);
+            return assignment;
         });
         
-        return assignment;
+        return assignments;
     }
 
     /**
@@ -748,6 +841,100 @@ class ResourceManager {
         }
         
         return unit.cargo * 15;
+    }
+
+    /**
+     * Получает доступных юнитов для резервирования (не назначенных и не в бою).
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} resourceAssignmentManager - Менеджер назначений ресурсов
+     * @returns {Array} Массив доступных юнитов
+     */
+    getAvailableUnitsForReservation(analysis, resourceAssignmentManager) {
+        return analysis.units.myUnits.filter(unit => 
+            !resourceAssignmentManager.getUnitAssignment(unit.id) && 
+            !this.isUnitInCombat(unit, analysis)
+        );
+    }
+
+    /**
+     * Приоритизирует доступные ресурсы.
+     * @param {Array} resources - Доступные ресурсы
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия игры
+     * @returns {Array} Отсортированный массив ресурсов с приоритетами
+     */
+    prioritizeAvailableResources(resources, analysis, strategy) {
+        const resourcePriorities = [];
+        
+        resources.forEach(resource => {
+            const priority = this.calculateResourcePriority(resource, analysis, strategy);
+            resourcePriorities.push({
+                resource,
+                priority,
+                distance: this.calculateNearestDistance(resource, analysis),
+                value: this.resourceValues[resource.type] || 0,
+                efficiency: this.calculateCollectionEfficiency(resource, analysis)
+            });
+        });
+        
+        return resourcePriorities.sort((a, b) => {
+            const aScore = (a.priority * a.value * a.efficiency) / (a.distance + 1);
+            const bScore = (b.priority * b.value * b.efficiency) / (b.distance + 1);
+            return bScore - aScore;
+        });
+    }
+
+    /**
+     * Находит лучшего юнита для сбора конкретного ресурса.
+     * @param {Object} resource - Ресурс
+     * @param {Array} availableUnits - Доступные юниты
+     * @param {Object} analysis - Анализ состояния игры
+     * @returns {Object|null} Лучший юнит или null
+     */
+    findBestUnitForResource(resource, availableUnits, analysis) {
+        if (availableUnits.length === 0) return null;
+        
+        let bestUnit = null;
+        let bestScore = -1;
+        
+        availableUnits.forEach(unit => {
+            const score = this.calculateUnitResourceScore(unit, resource, analysis);
+            if (score > bestScore) {
+                bestScore = score;
+                bestUnit = unit;
+            }
+        });
+        
+        return bestUnit;
+    }
+
+    /**
+     * Вычисляет приоритет резервирования ресурса для юнита.
+     * @param {Object} unit - Юнит
+     * @param {Object} resource - Ресурс
+     * @param {Object} analysis - Анализ состояния игры
+     * @param {Object} strategy - Стратегия игры
+     * @returns {number} Приоритет резервирования
+     */
+    calculateReservationPriority(unit, resource, analysis, strategy) {
+        let priority = this.calculateResourcePriority(resource, analysis, strategy);
+        
+        // Учитываем эффективность юнита для данного ресурса
+        const efficiency = this.collectionEfficiency[resource.type]?.[unit.type] || 0.5;
+        priority *= efficiency;
+        
+        // Учитываем расстояние
+        const distance = this.calculateDistance(unit, resource);
+        priority = priority / Math.max(1, distance * 0.1);
+        
+        // Бонус за совместимость типа ресурса с грузом юнита
+        if (unit.food && unit.food.type === resource.type) {
+            priority *= 1.5; // Бонус за совместимость типа ресурса
+        } else if (unit.food && unit.food.type !== resource.type) {
+            priority *= 0.3; // Штраф за несовместимость типа ресурса
+        }
+        
+        return Math.round(priority * 100) / 100; // Округляем до 2 знаков
     }
 
     /**
