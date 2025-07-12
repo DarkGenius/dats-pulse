@@ -24,6 +24,11 @@ class GameAnalyzer {
         this.unitTypeNames = UNIT_TYPE_NAMES;
         this.foodCalories = FOOD_CALORIES;
         this.unitStats = UNIT_STATS;
+        
+        // Threat map for proactive reconnaissance
+        this.threatMap = new Map(); // key: "q,r", value: { interest: number, lastSeen: turn }
+        this.enemySightingHistory = []; // Array of {position, turn, unitType}
+        this.maxThreatMapSize = 1000; // Prevent memory bloat
     }
 
     /**
@@ -32,6 +37,9 @@ class GameAnalyzer {
      * @returns {Object} Объект с результатами анализа всех аспектов игры
      */
     analyze(gameState) {
+        // Update threat map with new enemy sightings
+        this.updateThreatMap(gameState);
+        
         const analysis = {
             gamePhase: this.determineGamePhase(gameState),
             units: this.analyzeUnits(gameState),
@@ -39,6 +47,7 @@ class GameAnalyzer {
             threats: this.analyzeThreats(gameState),
             territory: this.analyzeTerritory(gameState),
             economy: this.analyzeEconomy(gameState),
+            threatMap: this.generateThreatMapAnalysis(gameState),
             gameState: gameState
         };
 
@@ -478,6 +487,249 @@ class GameAnalyzer {
         
         // Расстояние в кубических координатах
         return Math.max(Math.abs(q1 - q2), Math.abs(r1 - r2), Math.abs(s1 - s2));
+    }
+    
+    /**
+     * Updates the threat map with new enemy sightings.
+     * @param {Object} gameState - Current game state
+     */
+    updateThreatMap(gameState) {
+        const currentTurn = gameState.turnNo || 0;
+        const enemies = gameState.enemies || [];
+        
+        // Process new enemy sightings
+        enemies.forEach(enemy => {
+            const posKey = `${enemy.q},${enemy.r}`;
+            const sighting = {
+                position: { q: enemy.q, r: enemy.r },
+                turn: currentTurn,
+                unitType: enemy.type
+            };
+            
+            // Add to sighting history
+            this.enemySightingHistory.push(sighting);
+            
+            // Update threat map interest for this position and surrounding area
+            this.updateThreatInterest(enemy.q, enemy.r, currentTurn, enemy.type);
+        });
+        
+        // Trim old history to prevent memory bloat
+        const maxHistoryAge = 50; // Keep last 50 turns
+        this.enemySightingHistory = this.enemySightingHistory.filter(
+            sighting => currentTurn - sighting.turn <= maxHistoryAge
+        );
+        
+        // Decay threat map values over time
+        this.decayThreatMap(currentTurn);
+    }
+    
+    /**
+     * Updates threat interest for a position and surrounding area.
+     * @param {number} q - Q coordinate
+     * @param {number} r - R coordinate
+     * @param {number} turn - Current turn
+     * @param {number} unitType - Type of enemy unit
+     */
+    updateThreatInterest(q, r, turn, unitType) {
+        // Base interest based on unit type
+        let baseInterest = 10;
+        if (unitType === this.unitTypes.SOLDIER) {
+            baseInterest = 20; // Soldiers are more threatening
+        } else if (unitType === this.unitTypes.SCOUT) {
+            baseInterest = 15; // Scouts indicate exploration
+        }
+        
+        // Update interest in a radius around the sighting
+        const interestRadius = 8;
+        for (let dq = -interestRadius; dq <= interestRadius; dq++) {
+            for (let dr = -interestRadius; dr <= interestRadius; dr++) {
+                const distance = Math.max(Math.abs(dq), Math.abs(dr), Math.abs(-dq - dr));
+                if (distance > interestRadius) continue;
+                
+                const targetQ = q + dq;
+                const targetR = r + dr;
+                const posKey = `${targetQ},${targetR}`;
+                
+                // Interest decreases with distance
+                const distanceMultiplier = Math.max(0.1, 1 - (distance / interestRadius));
+                const interest = baseInterest * distanceMultiplier;
+                
+                const currentData = this.threatMap.get(posKey) || { interest: 0, lastSeen: 0 };
+                this.threatMap.set(posKey, {
+                    interest: Math.max(currentData.interest, interest),
+                    lastSeen: turn
+                });
+            }
+        }
+        
+        // Manage map size to prevent memory issues
+        if (this.threatMap.size > this.maxThreatMapSize) {
+            this.pruneOldThreatData(turn);
+        }
+    }
+    
+    /**
+     * Decays threat map values over time.
+     * @param {number} currentTurn - Current turn number
+     */
+    decayThreatMap(currentTurn) {
+        const decayRate = 0.95; // 5% decay per turn
+        const maxAge = 30; // Remove entries older than 30 turns
+        
+        for (const [posKey, data] of this.threatMap.entries()) {
+            const age = currentTurn - data.lastSeen;
+            
+            if (age > maxAge) {
+                this.threatMap.delete(posKey);
+            } else {
+                data.interest *= Math.pow(decayRate, age);
+                if (data.interest < 0.1) {
+                    this.threatMap.delete(posKey);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Removes oldest threat data to maintain memory limits.
+     * @param {number} currentTurn - Current turn number
+     */
+    pruneOldThreatData(currentTurn) {
+        const entries = Array.from(this.threatMap.entries());
+        
+        // Sort by age (oldest first)
+        entries.sort((a, b) => a[1].lastSeen - b[1].lastSeen);
+        
+        // Remove oldest 25% of entries
+        const toRemove = Math.floor(entries.length * 0.25);
+        for (let i = 0; i < toRemove; i++) {
+            this.threatMap.delete(entries[i][0]);
+        }
+        
+        logger.debug(`Pruned ${toRemove} old threat map entries, ${this.threatMap.size} remaining`);
+    }
+    
+    /**
+     * Generates threat map analysis for strategic decisions.
+     * @param {Object} gameState - Current game state
+     * @returns {Object} Threat map analysis
+     */
+    generateThreatMapAnalysis(gameState) {
+        const currentTurn = gameState.turnNo || 0;
+        const anthill = gameState.ants?.find(ant => ant.type === 0); // Find our anthill
+        
+        if (!anthill) {
+            return {
+                highInterestAreas: [],
+                recommendedScoutTargets: [],
+                threatDirections: []
+            };
+        }
+        
+        // Find high interest areas for exploration
+        const highInterestAreas = [];
+        const threatDirections = new Map();
+        
+        for (const [posKey, data] of this.threatMap.entries()) {
+            if (data.interest > 5) { // Significant interest threshold
+                const [q, r] = posKey.split(',').map(Number);
+                const position = { q, r };
+                const distance = this.calculateDistance(anthill, position);
+                
+                highInterestAreas.push({
+                    position,
+                    interest: data.interest,
+                    distance,
+                    age: currentTurn - data.lastSeen
+                });
+                
+                // Calculate threat direction
+                const direction = this.getDirection(anthill, position);
+                const currentThreat = threatDirections.get(direction) || 0;
+                threatDirections.set(direction, currentThreat + data.interest);
+            }
+        }
+        
+        // Sort by interest and proximity
+        highInterestAreas.sort((a, b) => {
+            const scoreA = a.interest * Math.max(0.1, 1 / (1 + a.distance * 0.1));
+            const scoreB = b.interest * Math.max(0.1, 1 / (1 + b.distance * 0.1));
+            return scoreB - scoreA;
+        });
+        
+        // Generate recommended scout targets based on threat map
+        const recommendedScoutTargets = this.generateScoutTargetsFromThreatMap(
+            anthill, 
+            highInterestAreas.slice(0, 10)
+        );
+        
+        return {
+            highInterestAreas: highInterestAreas.slice(0, 15),
+            recommendedScoutTargets,
+            threatDirections: Array.from(threatDirections.entries())
+                .map(([dir, threat]) => ({ direction: dir, threatLevel: threat }))
+                .sort((a, b) => b.threatLevel - a.threatLevel)
+        };
+    }
+    
+    /**
+     * Gets the general direction from one position to another.
+     * @param {Object} from - Source position
+     * @param {Object} to - Target position
+     * @returns {string} Direction name
+     */
+    getDirection(from, to) {
+        const dq = to.q - from.q;
+        const dr = to.r - from.r;
+        
+        // Convert to angle and determine octant
+        const angle = Math.atan2(dr, dq);
+        const octant = Math.round((angle + Math.PI) / (Math.PI / 4)) % 8;
+        
+        const directions = ['E', 'SE', 'S', 'SW', 'W', 'NW', 'N', 'NE'];
+        return directions[octant];
+    }
+    
+    /**
+     * Generates scout targets based on threat map analysis.
+     * @param {Object} anthill - Our anthill position
+     * @param {Array} highInterestAreas - Areas of high interest
+     * @returns {Array} Recommended scout targets
+     */
+    generateScoutTargetsFromThreatMap(anthill, highInterestAreas) {
+        const targets = [];
+        const maxScoutDistance = 40;
+        
+        highInterestAreas.forEach(area => {
+            if (area.distance <= maxScoutDistance) {
+                // Create exploration targets around the area of interest
+                const explorationRadius = 5;
+                const directions = [
+                    { q: 1, r: 0 }, { q: 0, r: 1 }, { q: -1, r: 1 },
+                    { q: -1, r: 0 }, { q: 0, r: -1 }, { q: 1, r: -1 }
+                ];
+                
+                directions.forEach(dir => {
+                    const target = {
+                        q: area.position.q + dir.q * explorationRadius,
+                        r: area.position.r + dir.r * explorationRadius,
+                        priority: area.interest,
+                        reason: 'threat_area_exploration',
+                        sourceInterest: area.interest
+                    };
+                    
+                    const targetDistance = this.calculateDistance(anthill, target);
+                    if (targetDistance <= maxScoutDistance) {
+                        targets.push(target);
+                    }
+                });
+            }
+        });
+        
+        // Sort by priority (interest level)
+        targets.sort((a, b) => b.priority - a.priority);
+        
+        return targets.slice(0, 8); // Return top 8 targets
     }
 }
 

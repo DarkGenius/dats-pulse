@@ -2066,8 +2066,8 @@ class UnitManager {
         return tasks;
     }
     /**
-     * Систематическая разведка карты для поиска вражеских муравейников.
-     * Разведчики движутся по спирали от базы, исследуя неизведанные области.
+     * Систематическая разведка карты с использованием карты угроз.
+     * Разведчики приоритезируют области с повышенным интересом на основе вражеских контактов.
      * @param {Object} unit - Юнит-разведчик
      * @param {Object} analysis - Анализ состояния игры
      * @returns {Object|null} Команда движения или null
@@ -2078,52 +2078,73 @@ class UnitManager {
         
         const gameState = analysis.gameState;
         const turn = gameState.turnNo || 0;
+        const threatMap = analysis.threatMap;
         
-        // Определяем радиус исследования в зависимости от времени игры
-        const baseRadius = 15;
-        const expansionRate = 2;
-        const maxRadius = 60;
-        const currentRadius = Math.min(maxRadius, baseRadius + Math.floor(turn / 20) * expansionRate);
-        
-        // Генерируем точки для систематического исследования
-        const explorationPoints = this.generateSpiralPattern(anthill, currentRadius);
-        
-        // Фильтруем точки, которые еще не исследованы
-        const unexploredPoints = explorationPoints.filter(point => 
-            !this.isPositionExplored(point, analysis)
-        );
-        
-        if (unexploredPoints.length === 0) {
-            logger.debug(`Scout ${unit.id}: All points within radius ${currentRadius} explored, expanding search`);
-            // Если все близкие точки исследованы, расширяем поиск
-            const extendedPoints = this.generateSpiralPattern(anthill, currentRadius + 10);
-            unexploredPoints.push(...extendedPoints.slice(explorationPoints.length));
-        }
-        
-        // Выбираем ближайшую неисследованную точку
-        let targetPoint = null;
-        let minDistance = Infinity;
-        
-        for (const point of unexploredPoints) {
-            const distance = this.calculateDistance(unit, point);
-            if (distance < minDistance) {
-                minDistance = distance;
-                targetPoint = point;
+        // PRIORITY 1: Check for threat map based targets
+        if (threatMap && threatMap.recommendedScoutTargets.length > 0) {
+            const threatBasedTarget = this.selectBestThreatMapTarget(unit, threatMap.recommendedScoutTargets);
+            if (threatBasedTarget) {
+                const path = this.findPath(unit, threatBasedTarget, analysis);
+                if (path && path.length > 0) {
+                    logger.info(`🎯 Scout ${unit.id} investigating threat area at (${threatBasedTarget.q}, ${threatBasedTarget.r}) - Interest: ${threatBasedTarget.priority.toFixed(1)}`);
+                    return {
+                        unit_id: unit.id,
+                        path: path,
+                        assignment: {
+                            type: 'systematic_exploration',
+                            target: threatBasedTarget,
+                            priority: 'high',
+                            reason: threatBasedTarget.reason,
+                            threatMapBased: true
+                        }
+                    };
+                }
             }
         }
         
-        if (targetPoint) {
-            const path = this.findPath(unit, targetPoint, analysis);
+        // PRIORITY 2: Enhanced directional exploration based on threat directions
+        if (threatMap && threatMap.threatDirections.length > 0) {
+            const priorityDirection = threatMap.threatDirections[0]; // Highest threat direction
+            const directionalTarget = this.generateDirectionalExplorationTarget(
+                unit, anthill, priorityDirection.direction, turn
+            );
+            
+            if (directionalTarget) {
+                const path = this.findPath(unit, directionalTarget, analysis);
+                if (path && path.length > 0) {
+                    logger.info(`🧭 Scout ${unit.id} priority directional exploration ${priorityDirection.direction} to (${directionalTarget.q}, ${directionalTarget.r})`);
+                    return {
+                        unit_id: unit.id,
+                        path: path,
+                        assignment: {
+                            type: 'systematic_exploration',
+                            target: directionalTarget,
+                            priority: 'high',
+                            direction: priorityDirection.direction,
+                            threatDirectionBased: true
+                        }
+                    };
+                }
+            }
+        }
+        
+        // PRIORITY 3: Fallback to traditional spiral exploration
+        const currentRadius = Math.min(60, 15 + Math.floor(turn / 20) * 2);
+        const spiralTarget = this.generateSpiralExplorationTarget(unit, anthill, currentRadius, analysis);
+        
+        if (spiralTarget) {
+            const path = this.findPath(unit, spiralTarget, analysis);
             if (path && path.length > 0) {
-                logger.info(`🔍 Scout ${unit.id} conducting systematic exploration to (${targetPoint.q}, ${targetPoint.r}) at radius ${currentRadius}`);
+                logger.info(`🌀 Scout ${unit.id} spiral exploration to (${spiralTarget.q}, ${spiralTarget.r}) at radius ${currentRadius}`);
                 return {
                     unit_id: unit.id,
                     path: path,
                     assignment: {
                         type: 'systematic_exploration',
-                        target: targetPoint,
+                        target: spiralTarget,
                         priority: 'medium',
-                        explorationRadius: currentRadius
+                        explorationRadius: currentRadius,
+                        spiralBased: true
                     }
                 };
             }
@@ -2131,6 +2152,115 @@ class UnitManager {
         
         logger.debug(`Scout ${unit.id}: No valid exploration targets found`);
         return null;
+    }
+    
+    /**
+     * Выбирает лучшую цель из рекомендаций карты угроз.
+     * @param {Object} unit - Юнит-разведчик
+     * @param {Array} threatTargets - Цели от карты угроз
+     * @returns {Object|null} Лучшая цель или null
+     */
+    selectBestThreatMapTarget(unit, threatTargets) {
+        if (threatTargets.length === 0) return null;
+        
+        // Score targets based on priority and distance
+        const scoredTargets = threatTargets.map(target => {
+            const distance = this.calculateDistance(unit, target);
+            const distanceScore = Math.max(0.1, 1 / (1 + distance * 0.1));
+            const score = target.priority * distanceScore;
+            
+            return { ...target, distance, score };
+        });
+        
+        // Sort by score (highest first)
+        scoredTargets.sort((a, b) => b.score - a.score);
+        
+        // Return best target within reasonable distance
+        const maxDistance = 35;
+        for (const target of scoredTargets) {
+            if (target.distance <= maxDistance) {
+                return target;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Генерирует цель для направленного исследования.
+     * @param {Object} unit - Юнит-разведчик
+     * @param {Object} anthill - Муравейник
+     * @param {string} direction - Направление угрозы
+     * @param {number} turn - Номер хода
+     * @returns {Object|null} Цель для исследования
+     */
+    generateDirectionalExplorationTarget(unit, anthill, direction, turn) {
+        // Convert direction to vector
+        const directionVectors = {
+            'E': { q: 1, r: 0 },
+            'SE': { q: 0, r: 1 },
+            'S': { q: -1, r: 1 },
+            'SW': { q: -1, r: 0 },
+            'W': { q: 0, r: -1 },
+            'NW': { q: 1, r: -1 },
+            'N': { q: 1, r: 0 },
+            'NE': { q: 1, r: -1 }
+        };
+        
+        const dirVector = directionVectors[direction];
+        if (!dirVector) return null;
+        
+        // Calculate target distance based on game progression
+        const baseDistance = 20;
+        const timeMultiplier = Math.floor(turn / 15);
+        const targetDistance = Math.min(40, baseDistance + timeMultiplier * 3);
+        
+        // Add some randomness to avoid predictable patterns
+        const randomOffset = (Math.random() - 0.5) * 0.3;
+        const effectiveDistance = targetDistance * (1 + randomOffset);
+        
+        return {
+            q: Math.round(anthill.q + dirVector.q * effectiveDistance),
+            r: Math.round(anthill.r + dirVector.r * effectiveDistance)
+        };
+    }
+    
+    /**
+     * Генерирует цель для спирального исследования.
+     * @param {Object} unit - Юнит-разведчик
+     * @param {Object} anthill - Муравейник
+     * @param {number} currentRadius - Текущий радиус исследования
+     * @param {Object} analysis - Анализ игры
+     * @returns {Object|null} Цель для исследования
+     */
+    generateSpiralExplorationTarget(unit, anthill, currentRadius, analysis) {
+        // Generate exploration points in spiral pattern
+        const explorationPoints = this.generateSpiralPattern(anthill, currentRadius);
+        
+        // Filter out explored points
+        const unexploredPoints = explorationPoints.filter(point => 
+            !this.isPositionExplored(point, analysis)
+        );
+        
+        if (unexploredPoints.length === 0) {
+            // If all points explored, expand radius
+            const extendedPoints = this.generateSpiralPattern(anthill, currentRadius + 10);
+            unexploredPoints.push(...extendedPoints.slice(explorationPoints.length));
+        }
+        
+        // Select closest unexplored point
+        let bestTarget = null;
+        let minDistance = Infinity;
+        
+        for (const point of unexploredPoints) {
+            const distance = this.calculateDistance(unit, point);
+            if (distance < minDistance) {
+                minDistance = distance;
+                bestTarget = point;
+            }
+        }
+        
+        return bestTarget;
     }
     
     /**
