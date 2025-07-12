@@ -72,7 +72,13 @@ class UnitManager {
         const centralAssignment = resourceAssignmentManager.getUnitAssignment(unit.id);
         if (centralAssignment) {
             logger.info(`🎯 Unit ${unit.id} executing central assignment to collect ${centralAssignment.resourceType || 'resource'} at (${centralAssignment.target.q}, ${centralAssignment.target.r})`);
-            return this.executeResourceAssignment(unit, centralAssignment, analysis);
+            const moveResult = this.executeResourceAssignment(unit, centralAssignment, analysis, resourceAssignmentManager);
+            if (!moveResult) {
+                // Path failed - release assignment and try again next turn
+                logger.warn(`🚫 Releasing assignment for unit ${unit.id} due to pathfinding failure`);
+                resourceAssignmentManager.releaseUnitAssignment(unit.id);
+            }
+            return moveResult;
         }
         
         // Если юнит может собирать ресурсы, но не имеет назначения,
@@ -102,7 +108,7 @@ class UnitManager {
      * @param {Object} analysis - Анализ состояния игры
      * @returns {Object|null} Команда движения или null
      */
-    executeResourceAssignment(unit, assignment, analysis) {
+    executeResourceAssignment(unit, assignment, analysis, resourceAssignmentManager = null) {
         const target = assignment.target;
         const path = this.findPath(unit, target, analysis);
         
@@ -2594,11 +2600,17 @@ class UnitManager {
                 const resourceDistance = this.calculateDistance(anthill, centralAssignment.target);
                 if (resourceDistance <= maxSafeDistance) {
                     logger.info(`🚨 Recovery: Worker ${unit.id} collecting safe resource at distance ${resourceDistance}`);
-                    return this.executeResourceAssignment(unit, centralAssignment, analysis);
+                    const moveResult = this.executeResourceAssignment(unit, centralAssignment, analysis, resourceAssignmentManager);
+                    if (!moveResult) {
+                        // Path failed - release assignment
+                        logger.warn(`🚫 Recovery: Releasing assignment for unit ${unit.id} due to pathfinding failure`);
+                        resourceAssignmentManager.releaseUnitAssignment(unit.id);
+                    }
+                    return moveResult;
                 } else {
                     logger.warn(`🚨 Recovery: Worker ${unit.id} abandoning distant resource (distance ${resourceDistance} > ${maxSafeDistance})`);
                     // Release the assignment
-                    resourceAssignmentManager.releaseAssignment(unit.id);
+                    resourceAssignmentManager.releaseUnitAssignment(unit.id);
                 }
             }
             
