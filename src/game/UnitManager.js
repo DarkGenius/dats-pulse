@@ -63,6 +63,11 @@ class UnitManager {
      * @returns {Object|null} Команда движения или null
      */
     planUnitAction(unit, analysis, strategy, resourceAssignmentManager) {
+        // RECOVERY MODE: Emergency protocols override normal behavior
+        if (strategy && strategy.recoveryMode) {
+            return this.handleRecoveryModeUnit(unit, analysis, strategy, resourceAssignmentManager);
+        }
+        
         // ПРИОРИТЕТ 1: Проверяем, есть ли уже назначение из центрального менеджера
         const centralAssignment = resourceAssignmentManager.getUnitAssignment(unit.id);
         if (centralAssignment) {
@@ -2533,6 +2538,131 @@ class UnitManager {
         });
         
         return Math.max(0, score);
+    }
+    
+    /**
+     * Handles unit actions during recovery mode.
+     * @param {Object} unit - Unit to handle
+     * @param {Object} analysis - Game analysis
+     * @param {Object} strategy - Recovery strategy
+     * @param {Object} resourceAssignmentManager - Resource assignment manager
+     * @returns {Object|null} Unit action or null
+     */
+    handleRecoveryModeUnit(unit, analysis, strategy, resourceAssignmentManager) {
+        const anthill = analysis.units.anthill;
+        if (!anthill) return null;
+        
+        const distanceToBase = this.calculateDistance(unit, anthill);
+        const maxSafeDistance = strategy.resourceStrategy?.maxCollectionDistance || 15;
+        
+        // PRIORITY 1: Return loaded units to base immediately
+        if (this.shouldReturnToAnthill(unit, analysis)) {
+            logger.info(`🚨 Recovery: Unit ${unit.id} returning to base with cargo`);
+            return this.returnToAnthill(unit, analysis);
+        }
+        
+        // PRIORITY 2: Soldiers defend base perimeter only
+        if (unit.type === this.unitTypes.SOLDIER) {
+            // Keep soldiers close to base in recovery mode
+            if (distanceToBase > 8) {
+                logger.info(`🚨 Recovery: Soldier ${unit.id} returning to defensive perimeter`);
+                const defensivePosition = this.getRecoveryDefensivePosition(unit, anthill);
+                const path = this.findPath(unit, defensivePosition, analysis);
+                
+                if (path && path.length > 0) {
+                    return {
+                        unit_id: unit.id,
+                        path: path,
+                        assignment: {
+                            type: 'recovery_defense',
+                            target: defensivePosition,
+                            priority: 'high'
+                        }
+                    };
+                }
+            }
+            
+            // Stay in defensive position - don't patrol far
+            return null;
+        }
+        
+        // PRIORITY 3: Non-combat units - only workers collect in recovery mode
+        if (unit.type === this.unitTypes.WORKER) {
+            // Only collect resources very close to base
+            const centralAssignment = resourceAssignmentManager.getUnitAssignment(unit.id);
+            if (centralAssignment) {
+                const resourceDistance = this.calculateDistance(anthill, centralAssignment.target);
+                if (resourceDistance <= maxSafeDistance) {
+                    logger.info(`🚨 Recovery: Worker ${unit.id} collecting safe resource at distance ${resourceDistance}`);
+                    return this.executeResourceAssignment(unit, centralAssignment, analysis);
+                } else {
+                    logger.warn(`🚨 Recovery: Worker ${unit.id} abandoning distant resource (distance ${resourceDistance} > ${maxSafeDistance})`);
+                    // Release the assignment
+                    resourceAssignmentManager.releaseAssignment(unit.id);
+                }
+            }
+            
+            // If no safe assignment, return to base
+            if (distanceToBase > 5) {
+                logger.info(`🚨 Recovery: Worker ${unit.id} returning to base (distance ${distanceToBase})`);
+                const path = this.findPath(unit, anthill, analysis);
+                if (path && path.length > 0) {
+                    return {
+                        unit_id: unit.id,
+                        path: path,
+                        assignment: {
+                            type: 'recovery_return',
+                            target: anthill,
+                            priority: 'medium'
+                        }
+                    };
+                }
+            }
+            
+            return null; // Stay near base
+        }
+        
+        // PRIORITY 4: Scouts should return to base immediately in recovery mode
+        if (unit.type === this.unitTypes.SCOUT) {
+            if (distanceToBase > 3) {
+                logger.info(`🚨 Recovery: Scout ${unit.id} returning to base immediately`);
+                const path = this.findPath(unit, anthill, analysis);
+                if (path && path.length > 0) {
+                    return {
+                        unit_id: unit.id,
+                        path: path,
+                        assignment: {
+                            type: 'recovery_return',
+                            target: anthill,
+                            priority: 'medium'
+                        }
+                    };
+                }
+            }
+            
+            return null; // Stay at base
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Gets a defensive position near the anthill for recovery mode.
+     * @param {Object} unit - Soldier unit
+     * @param {Object} anthill - Anthill position
+     * @returns {Object} Defensive position
+     */
+    getRecoveryDefensivePosition(unit, anthill) {
+        const defensiveRadius = 6;
+        
+        // Position soldiers in a defensive ring around the anthill
+        const soldierHash = Math.abs(unit.id.charCodeAt(0)) % 8;
+        const angle = (soldierHash / 8) * Math.PI * 2;
+        
+        return {
+            q: Math.round(anthill.q + Math.cos(angle) * defensiveRadius),
+            r: Math.round(anthill.r + Math.sin(angle) * defensiveRadius)
+        };
     }
 }
 

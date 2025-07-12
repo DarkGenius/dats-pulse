@@ -5,20 +5,52 @@ class StrategyManager {
         this.phases = {
             EARLY: 'early',
             MID: 'mid',
-            LATE: 'late'
+            LATE: 'late',
+            RECOVERY: 'recovery'
         };
+        
+        // Track unit counts over time for loss analysis
+        this.unitCountHistory = [];
+        this.maxHistoryLength = 10; // Keep last 10 turns
+        this.recoveryModeTriggered = false;
+        this.recoveryModeStartTurn = null;
     }
 
     determineStrategy(analysis, turnNumber) {
-        const phase = analysis.gamePhase;
+        // Update unit count history for loss tracking
+        this.updateUnitCountHistory(analysis, turnNumber);
+        
+        // Check for recovery mode conditions
+        const shouldEnterRecovery = this.shouldEnterRecoveryMode(analysis, turnNumber);
+        const shouldExitRecovery = this.shouldExitRecoveryMode(analysis, turnNumber);
+        
+        let phase = analysis.gamePhase;
+        
+        // Override phase if recovery mode is needed
+        if (shouldEnterRecovery && !this.recoveryModeTriggered) {
+            this.recoveryModeTriggered = true;
+            this.recoveryModeStartTurn = turnNumber;
+            phase = this.phases.RECOVERY;
+            logger.warn(`🚨 RECOVERY MODE ACTIVATED on turn ${turnNumber} - significant unit losses detected`);
+        } else if (shouldExitRecovery && this.recoveryModeTriggered) {
+            this.recoveryModeTriggered = false;
+            this.recoveryModeStartTurn = null;
+            phase = analysis.gamePhase; // Return to normal phase
+            logger.info(`✅ Recovery mode deactivated on turn ${turnNumber} - army rebuilt`);
+        } else if (this.recoveryModeTriggered) {
+            phase = this.phases.RECOVERY; // Stay in recovery mode
+        }
+        
         const strategy = {
             name: this.getStrategyName(phase, analysis),
             phase,
             priorities: this.getPhasePriorities(phase, analysis),
-            resourceStrategy: this.determineResourceStrategy(analysis),
-            combatStrategy: this.determineCombatStrategy(analysis),
+            resourceStrategy: this.determineResourceStrategy(analysis, phase),
+            combatStrategy: this.determineCombatStrategy(analysis, phase),
             adaptations: this.determineAdaptations(analysis),
-            reasoning: []
+            reasoning: [],
+            recoveryMode: this.recoveryModeTriggered,
+            recoveryStartTurn: this.recoveryModeStartTurn
         };
         
         // Add reasoning for phase selection
@@ -28,11 +60,24 @@ class StrategyManager {
             details: `Turn ${turnNumber}, determining ${phase} phase strategy`
         });
 
+        if (this.recoveryModeTriggered) {
+            strategy.reasoning.push({
+                category: 'recovery',
+                decision: 'emergency_rebuild',
+                details: `Recovery mode since turn ${this.recoveryModeStartTurn}, focusing on rebuilding army`
+            });
+        }
+
         logger.debug(`Strategy for turn ${turnNumber} (${phase} phase):`); //, strategy);
         return strategy;
     }
     
     getStrategyName(phase, analysis) {
+        // Recovery mode takes priority
+        if (phase === this.phases.RECOVERY) {
+            return 'emergency_recovery';
+        }
+        
         // More aggressive strategy naming
         if (analysis.gameState?.enemies?.length > 0) {
             return 'aggressive_combat_' + phase;
@@ -69,20 +114,34 @@ class StrategyManager {
             case this.phases.LATE:
                 priorities.push('enemy_base_destruction', 'aggressive_raiding', 'optimization_dominance', 'high_value_resources');
                 break;
+            case this.phases.RECOVERY:
+                priorities.push('emergency_economy', 'safe_resource_collection', 'defensive_reconstruction', 'unit_rebuild');
+                break;
         }
 
         return priorities;
     }
 
-    determineResourceStrategy(analysis) {
-        const { gamePhase, resources } = analysis;
-        const priorities = this.getResourcePriorities(gamePhase, resources);
+    determineResourceStrategy(analysis, phase = null) {
+        const actualPhase = phase || analysis.gamePhase;
+        const { resources } = analysis;
+        const priorities = this.getResourcePriorities(actualPhase, resources);
         
-        return {
+        const strategy = {
             priorities,
             assignments: this.assignResourceTargets(analysis),
-            logistics: this.planLogistics(analysis)
+            logistics: this.planLogistics(analysis),
+            recoveryMode: actualPhase === this.phases.RECOVERY
         };
+        
+        // Recovery mode specific adjustments
+        if (actualPhase === this.phases.RECOVERY) {
+            strategy.maxCollectionDistance = 15; // Limit to close resources only
+            strategy.allowedCollectors = ['worker']; // Only workers collect in recovery
+            strategy.safetyPriority = 'critical'; // Prioritize safety over efficiency
+        }
+        
+        return strategy;
     }
 
     getResourcePriorities(gamePhase, resources) {
@@ -239,18 +298,30 @@ class StrategyManager {
         };
     }
 
-    determineCombatStrategy(analysis) {
-        const { gamePhase, threats, units } = analysis;
+    determineCombatStrategy(analysis, phase = null) {
+        const actualPhase = phase || analysis.gamePhase;
+        const { threats, units } = analysis;
         
         const combatReadiness = this.calculateCombatReadiness(analysis);
-        const strategy = this.selectCombatStrategy(combatReadiness, threats, gamePhase);
+        const strategy = this.selectCombatStrategy(combatReadiness, threats, actualPhase);
         
-        return {
+        const combatStrategy = {
             readiness: combatReadiness,
             strategy,
             formations: this.recommendFormations(analysis),
-            targets: this.identifyTargets(analysis)
+            targets: this.identifyTargets(analysis),
+            recoveryMode: actualPhase === this.phases.RECOVERY
         };
+        
+        // Recovery mode specific adjustments
+        if (actualPhase === this.phases.RECOVERY) {
+            combatStrategy.stance = 'defensive';
+            combatStrategy.engagement = 'avoid_unless_necessary';
+            combatStrategy.maxPatrolDistance = 10; // Keep soldiers close to base
+            combatStrategy.prioritizeDefense = true;
+        }
+        
+        return combatStrategy;
     }
 
     calculateCombatReadiness(analysis) {
@@ -436,6 +507,91 @@ class StrategyManager {
         const s2 = -q2 - r2;
         
         return Math.max(Math.abs(q1 - q2), Math.abs(r1 - r2), Math.abs(s1 - s2));
+    }
+    
+    /**
+     * Updates the unit count history for loss tracking.
+     * @param {Object} analysis - Game analysis
+     * @param {number} turnNumber - Current turn
+     */
+    updateUnitCountHistory(analysis, turnNumber) {
+        const unitCounts = analysis.units.counts;
+        
+        this.unitCountHistory.push({
+            turn: turnNumber,
+            total: unitCounts.total,
+            workers: unitCounts.worker,
+            soldiers: unitCounts.soldier,
+            scouts: unitCounts.scout
+        });
+        
+        // Maintain history size
+        if (this.unitCountHistory.length > this.maxHistoryLength) {
+            this.unitCountHistory.shift();
+        }
+    }
+    
+    /**
+     * Determines if recovery mode should be entered based on unit losses.
+     * @param {Object} analysis - Game analysis
+     * @param {number} turnNumber - Current turn
+     * @returns {boolean} True if recovery mode should be entered
+     */
+    shouldEnterRecoveryMode(analysis, turnNumber) {
+        if (this.recoveryModeTriggered) return false; // Already in recovery
+        if (this.unitCountHistory.length < 3) return false; // Not enough history
+        
+        const currentUnits = analysis.units.counts.total;
+        const recentHistory = this.unitCountHistory.slice(-3); // Last 3 turns
+        
+        if (recentHistory.length < 3) return false;
+        
+        // Calculate unit loss over last 3 turns
+        const startUnits = recentHistory[0].total;
+        const lossRate = startUnits > 0 ? (startUnits - currentUnits) / startUnits : 0;
+        
+        // Recovery conditions:
+        // 1. Lost more than 40% of army in last 3 turns
+        // 2. Have fewer than 5 total units
+        // 3. Have no soldiers and enemies are present
+        const significantLoss = lossRate > 0.4;
+        const criticallyLow = currentUnits < 5;
+        const noSoldiers = analysis.units.counts.soldier === 0 && analysis.units.enemyUnits.length > 0;
+        
+        if (significantLoss || criticallyLow || noSoldiers) {
+            logger.warn(`Recovery triggers: Loss=${(lossRate*100).toFixed(1)}%, Total=${currentUnits}, Soldiers=${analysis.units.counts.soldier}, Enemies=${analysis.units.enemyUnits.length}`);
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Determines if recovery mode should be exited.
+     * @param {Object} analysis - Game analysis
+     * @param {number} turnNumber - Current turn
+     * @returns {boolean} True if recovery mode should be exited
+     */
+    shouldExitRecoveryMode(analysis, turnNumber) {
+        if (!this.recoveryModeTriggered) return false; // Not in recovery
+        
+        const currentUnits = analysis.units.counts;
+        const timeSinceRecovery = turnNumber - this.recoveryModeStartTurn;
+        
+        // Exit conditions:
+        // 1. Have rebuilt to at least 8 total units
+        // 2. Have at least 2 soldiers for defense
+        // 3. Have been in recovery for at least 5 turns (prevent flip-flopping)
+        const hasRebuiltArmy = currentUnits.total >= 8;
+        const hasDefenders = currentUnits.soldier >= 2;
+        const hasBeenInRecoveryLongEnough = timeSinceRecovery >= 5;
+        
+        if (hasRebuiltArmy && hasDefenders && hasBeenInRecoveryLongEnough) {
+            logger.info(`Recovery exit: ${currentUnits.total} units, ${currentUnits.soldier} soldiers after ${timeSinceRecovery} turns`);
+            return true;
+        }
+        
+        return false;
     }
 }
 
