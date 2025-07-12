@@ -355,6 +355,11 @@ class ResourceManager {
     calculateUnitResourceScore(unit, resource, analysis) {
         let score = 0;
         
+        // CRITICAL FIX: Soldiers should not collect resources
+        if (unit.type === this.unitTypes.SOLDIER) {
+            return -1000; // Heavily penalize soldiers for resource collection
+        }
+        
         const efficiency = this.collectionEfficiency[resource.type]?.[unit.type] || 0.5;
         score += efficiency * 10;
         
@@ -826,7 +831,10 @@ class ResourceManager {
      * @returns {Array} Массив доступных юнитов
      */
     getAvailableUnitsForReservation(analysis, resourceAssignmentManager) {
+        // CRITICAL FIX: Only workers (type 1) and scouts (type 3) should collect resources
+        // Soldiers (type 2) should focus on combat
         return analysis.units.myUnits.filter(unit => 
+            unit.type !== this.unitTypes.SOLDIER && // Exclude soldiers from resource collection
             !resourceAssignmentManager.getUnitAssignment(unit.id) && 
             !this.isUnitInCombat(unit, analysis)
         );
