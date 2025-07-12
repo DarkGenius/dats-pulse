@@ -241,14 +241,9 @@ class UnitManager {
             tasks.push('find_enemy_anthill', 'aggressive_exploration', 'exploration', 'resource_scouting');
             // Централизованная система управляет всеми ресурсными задачами
         } else if (unitTypeName === 'soldier') {
-            // CRITICAL FIX: Soldiers must prioritize combat over everything else
-            // Check for any enemies on the map
-            if (analysis.units.enemyUnits && analysis.units.enemyUnits.length > 0) {
-                tasks.push('hunt_enemies'); // Primary task - hunt any visible enemies
-                return tasks; // Return immediately - soldiers should focus on combat
-            }
-            // If no enemies visible, patrol and defend
-            tasks.push('territory_defense', 'convoy_protection', 'aggressive_exploration');
+            // Soldiers should not get any tasks from UnitManager
+            // Combat decisions are handled by CombatManager
+            return [];
         } else if (unitTypeName === 'worker') {
             // Workers focus on support tasks, central manager handles resources
             tasks.push('assist_raid', 'construction');
@@ -259,7 +254,7 @@ class UnitManager {
         } else if (phase === 'mid') {
             tasks.push('find_enemy_anthill', 'territory_control', 'resource_optimization');
         } else if (phase === 'late') {
-            tasks.push('raid_enemy_anthill', 'hunt_enemies', 'high_value_resources', 'enemy_disruption');
+            tasks.push('raid_enemy_anthill', 'high_value_resources', 'enemy_disruption');
         }
         
         return tasks;
@@ -293,8 +288,8 @@ class UnitManager {
                 return this.findEnemyAnthill(unit, analysis);
             case 'raid_enemy_anthill':
                 return this.raidEnemyAnthill(unit, analysis);
-            case 'hunt_enemies':
-                return this.huntEnemies(unit, analysis);
+            // case 'hunt_enemies':
+            //     return this.huntEnemies(unit, analysis);  // Combat handled by CombatManager
             case 'assist_raid':
                 return this.assistRaid(unit, analysis);
             case 'combat':
