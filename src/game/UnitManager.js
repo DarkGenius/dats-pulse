@@ -73,7 +73,7 @@ class UnitManager {
         // Если юнит может собирать ресурсы, но не имеет назначения,
         // он ждет назначения от ResourceManager (но не солдаты!)
         if (unit.type !== this.unitTypes.SOLDIER && 
-            this.canCollectResources(unit) && 
+            this.canCollectResources(unit, analysis) && 
             this.hasAvailableResources(analysis)) {
             logger.info(`⏳ Unit ${unit.id} (${this.unitTypeNames[unit.type]}) waiting for resource assignment from central manager. Available resources: ${analysis.resources.visible.length}`);
             // Don't patrol - just stay still or return to base
@@ -1282,9 +1282,9 @@ class UnitManager {
      * @param {Object} unit - Юнит
      * @returns {boolean} true, если юнит может собирать ресурсы
      */
-    canCollectResources(unit) {
+    canCollectResources(unit, analysis) {
         // Юнит должен вернуться к муравейнику, если загружен на 80%+
-        if (this.shouldReturnToAnthill(unit, { units: {} })) {
+        if (this.shouldReturnToAnthill(unit, analysis)) {
             return false;
         }
         

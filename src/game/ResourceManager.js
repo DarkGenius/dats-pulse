@@ -908,19 +908,24 @@ class ResourceManager {
      * @returns {Object|null} Лучший юнит или null
      */
     findBestUnitForResource(resource, availableUnits, analysis) {
-        if (availableUnits.length === 0) return null;
+        if (availableUnits.length === 0) {
+            logger.debug('No available units to assign to resource');
+            return null;
+        }
         
         let bestUnit = null;
         let bestScore = -1;
         
         availableUnits.forEach(unit => {
             const score = this.calculateUnitResourceScore(unit, resource, analysis);
+            logger.debug(`Unit ${unit.id} (${this.unitTypeNames[unit.type]}) score: ${score}`);
             if (score > bestScore) {
                 bestScore = score;
                 bestUnit = unit;
             }
         });
         
+        logger.debug(`Best unit for ${this.foodTypeNames[resource.type]} at (${resource.q}, ${resource.r}): ${bestUnit ? `${bestUnit.id} with score ${bestScore}` : 'none'}`);
         return bestUnit;
     }
 
