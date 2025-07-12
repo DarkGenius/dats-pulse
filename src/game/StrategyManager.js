@@ -41,13 +41,19 @@ class StrategyManager {
             phase = this.phases.RECOVERY; // Stay in recovery mode
         }
         
+        // Analyze enemy army composition for tactical adaptation
+        const enemyCompositionAnalysis = this.analyzeEnemyComposition(analysis);
+        const tacticalAdaptations = this.determineTacticalAdaptations(enemyCompositionAnalysis, analysis);
+        
         const strategy = {
             name: this.getStrategyName(phase, analysis),
             phase,
             priorities: this.getPhasePriorities(phase, analysis),
-            resourceStrategy: this.determineResourceStrategy(analysis, phase),
-            combatStrategy: this.determineCombatStrategy(analysis, phase),
+            resourceStrategy: this.determineResourceStrategy(analysis, phase, tacticalAdaptations),
+            combatStrategy: this.determineCombatStrategy(analysis, phase, tacticalAdaptations),
             adaptations: this.determineAdaptations(analysis),
+            enemyComposition: enemyCompositionAnalysis,
+            tacticalAdaptations: tacticalAdaptations,
             reasoning: [],
             recoveryMode: this.recoveryModeTriggered,
             recoveryStartTurn: this.recoveryModeStartTurn
@@ -122,7 +128,7 @@ class StrategyManager {
         return priorities;
     }
 
-    determineResourceStrategy(analysis, phase = null) {
+    determineResourceStrategy(analysis, phase = null, tacticalAdaptations = null) {
         const actualPhase = phase || analysis.gamePhase;
         const { resources } = analysis;
         const priorities = this.getResourcePriorities(actualPhase, resources);
@@ -139,6 +145,26 @@ class StrategyManager {
             strategy.maxCollectionDistance = 15; // Limit to close resources only
             strategy.allowedCollectors = ['worker']; // Only workers collect in recovery
             strategy.safetyPriority = 'critical'; // Prioritize safety over efficiency
+        }
+        
+        // Apply tactical adaptations based on enemy composition
+        if (tacticalAdaptations && tacticalAdaptations.economicChanges) {
+            const economicChanges = tacticalAdaptations.economicChanges;
+            
+            if (economicChanges.restrictResourceCollection) {
+                strategy.maxCollectionDistance = Math.min(
+                    strategy.maxCollectionDistance || 25,
+                    economicChanges.maxCollectionDistance || 12
+                );
+                strategy.safetyPriority = 'high';
+                logger.info(`🛡️ Restricting resource collection due to enemy threat - max distance: ${strategy.maxCollectionDistance}`);
+            }
+            
+            if (economicChanges.protectWorkers) {
+                strategy.requireEscort = true;
+                strategy.maxWorkerDistance = economicChanges.maxWorkerDistance || 10;
+                logger.info(`👥 Worker protection enabled - max distance: ${strategy.maxWorkerDistance}`);
+            }
         }
         
         return strategy;
@@ -298,7 +324,7 @@ class StrategyManager {
         };
     }
 
-    determineCombatStrategy(analysis, phase = null) {
+    determineCombatStrategy(analysis, phase = null, tacticalAdaptations = null) {
         const actualPhase = phase || analysis.gamePhase;
         const { threats, units } = analysis;
         
@@ -319,6 +345,40 @@ class StrategyManager {
             combatStrategy.engagement = 'avoid_unless_necessary';
             combatStrategy.maxPatrolDistance = 10; // Keep soldiers close to base
             combatStrategy.prioritizeDefense = true;
+        }
+        
+        // Apply tactical adaptations based on enemy composition
+        if (tacticalAdaptations) {
+            // Apply defensive changes
+            if (tacticalAdaptations.defensiveChanges) {
+                const defensiveChanges = tacticalAdaptations.defensiveChanges;
+                
+                if (defensiveChanges.increaseBaseDefense) {
+                    combatStrategy.stance = 'defensive';
+                    combatStrategy.prioritizeDefense = true;
+                    logger.info(`🛡️ Increased base defense due to enemy threat`);
+                }
+                
+                if (defensiveChanges.keepSoldiersClose) {
+                    combatStrategy.maxPatrolDistance = Math.min(
+                        combatStrategy.maxPatrolDistance || 25,
+                        defensiveChanges.maxPatrolDistance || 15
+                    );
+                    logger.info(`🏠 Keeping soldiers close to base - max patrol distance: ${combatStrategy.maxPatrolDistance}`);
+                }
+                
+                if (defensiveChanges.antiScoutMeasures) {
+                    combatStrategy.prioritizeTargets = ['scout']; // Focus on eliminating scouts
+                    combatStrategy.interceptScouts = true;
+                    logger.info(`🎯 Anti-scout measures activated`);
+                }
+            }
+            
+            // Apply unit production priorities
+            if (tacticalAdaptations.unitProduction) {
+                combatStrategy.unitProductionPriorities = tacticalAdaptations.unitProduction;
+                logger.info(`⚔️ Combat unit production adapted: ${tacticalAdaptations.unitProduction.reason}`);
+            }
         }
         
         return combatStrategy;
@@ -593,6 +653,299 @@ class StrategyManager {
         }
         
         return false;
+    }
+    
+    /**
+     * Analyzes enemy army composition to understand their strategy.
+     * @param {Object} analysis - Game analysis
+     * @returns {Object} Enemy composition analysis
+     */
+    analyzeEnemyComposition(analysis) {
+        const enemyUnits = analysis.units.enemyUnits || [];
+        
+        if (enemyUnits.length === 0) {
+            return {
+                totalUnits: 0,
+                composition: { workers: 0, soldiers: 0, scouts: 0 },
+                ratios: { workers: 0, soldiers: 0, scouts: 0 },
+                strategyType: 'unknown',
+                threat: 'minimal',
+                recommendedResponse: 'normal_expansion'
+            };
+        }
+        
+        // Count unit types
+        const composition = {
+            workers: enemyUnits.filter(u => u.type === 1).length,
+            soldiers: enemyUnits.filter(u => u.type === 2).length,
+            scouts: enemyUnits.filter(u => u.type === 3).length
+        };
+        
+        const totalUnits = composition.workers + composition.soldiers + composition.scouts;
+        
+        // Calculate ratios
+        const ratios = {
+            workers: totalUnits > 0 ? composition.workers / totalUnits : 0,
+            soldiers: totalUnits > 0 ? composition.soldiers / totalUnits : 0,
+            scouts: totalUnits > 0 ? composition.scouts / totalUnits : 0
+        };
+        
+        // Determine enemy strategy type
+        const strategyType = this.classifyEnemyStrategy(ratios, composition, totalUnits);
+        
+        // Assess threat level
+        const threat = this.assessEnemyThreat(composition, ratios, analysis);
+        
+        // Generate recommended response
+        const recommendedResponse = this.getRecommendedResponse(strategyType, threat, ratios);
+        
+        logger.info(`🔍 Enemy composition: ${composition.workers}W/${composition.soldiers}S/${composition.scouts}Sc (${strategyType} strategy, ${threat} threat)`);
+        
+        return {
+            totalUnits,
+            composition,
+            ratios,
+            strategyType,
+            threat,
+            recommendedResponse,
+            analysis: {
+                workerFocused: ratios.workers > 0.6,
+                militaryFocused: ratios.soldiers > 0.5,
+                scoutHeavy: ratios.scouts > 0.4,
+                balanced: Math.max(ratios.workers, ratios.soldiers, ratios.scouts) < 0.5
+            }
+        };
+    }
+    
+    /**
+     * Classifies enemy strategy based on unit composition.
+     * @param {Object} ratios - Unit type ratios
+     * @param {Object} composition - Unit counts
+     * @param {number} totalUnits - Total unit count
+     * @returns {string} Strategy classification
+     */
+    classifyEnemyStrategy(ratios, composition, totalUnits) {
+        // Economic focus
+        if (ratios.workers > 0.6) {
+            return 'economic_boom';
+        }
+        
+        // Military focus
+        if (ratios.soldiers > 0.5) {
+            return 'military_rush';
+        }
+        
+        // Scout heavy (raid strategy)
+        if (ratios.scouts > 0.4) {
+            return 'scout_harassment';
+        }
+        
+        // Small army - probably early game
+        if (totalUnits < 5) {
+            return 'early_development';
+        }
+        
+        // Medium-sized balanced army
+        if (totalUnits >= 5 && totalUnits <= 15) {
+            if (composition.soldiers >= 2 && composition.workers >= 3) {
+                return 'balanced_expansion';
+            }
+        }
+        
+        // Large army
+        if (totalUnits > 15) {
+            if (ratios.soldiers > 0.3) {
+                return 'late_game_military';
+            } else {
+                return 'late_game_economic';
+            }
+        }
+        
+        return 'unknown';
+    }
+    
+    /**
+     * Assesses threat level from enemy composition.
+     * @param {Object} composition - Unit counts
+     * @param {Object} ratios - Unit ratios
+     * @param {Object} analysis - Game analysis
+     * @returns {string} Threat level
+     */
+    assessEnemyThreat(composition, ratios, analysis) {
+        let threatScore = 0;
+        
+        // Base threat from soldiers
+        threatScore += composition.soldiers * 3;
+        
+        // Scouts are moderately threatening (harassment)
+        threatScore += composition.scouts * 1.5;
+        
+        // Workers are only economic threat
+        threatScore += composition.workers * 0.5;
+        
+        // Military-heavy compositions are more threatening
+        if (ratios.soldiers > 0.4) {
+            threatScore *= 1.5;
+        }
+        
+        // Scout-heavy means harassment threat
+        if (ratios.scouts > 0.4) {
+            threatScore *= 1.3;
+        }
+        
+        // Distance to our base matters
+        const anthill = analysis.units.anthill;
+        if (anthill) {
+            const nearbyEnemies = analysis.units.enemyUnits.filter(enemy => {
+                const distance = this.calculateDistance(anthill, enemy);
+                return distance <= 15;
+            });
+            
+            if (nearbyEnemies.length > 0) {
+                threatScore *= 1.5; // Nearby enemies are more threatening
+            }
+        }
+        
+        // Classify threat level
+        if (threatScore < 5) return 'minimal';
+        if (threatScore < 15) return 'low';
+        if (threatScore < 30) return 'moderate';
+        if (threatScore < 50) return 'high';
+        return 'critical';
+    }
+    
+    /**
+     * Determines recommended response to enemy composition.
+     * @param {string} strategyType - Enemy strategy type
+     * @param {string} threat - Threat level
+     * @param {Object} ratios - Enemy unit ratios
+     * @returns {string} Recommended response
+     */
+    getRecommendedResponse(strategyType, threat, ratios) {
+        switch (strategyType) {
+            case 'economic_boom':
+                return threat === 'minimal' ? 'aggressive_harassment' : 'military_buildup';
+                
+            case 'military_rush':
+                return 'defensive_preparation';
+                
+            case 'scout_harassment':
+                return 'base_defense_enhancement';
+                
+            case 'balanced_expansion':
+                return 'counter_expansion';
+                
+            case 'late_game_military':
+                return 'defensive_positioning';
+                
+            case 'late_game_economic':
+                return 'military_pressure';
+                
+            default:
+                return 'adaptive_response';
+        }
+    }
+    
+    /**
+     * Determines tactical adaptations based on enemy composition.
+     * @param {Object} enemyComposition - Enemy composition analysis
+     * @param {Object} analysis - Game analysis
+     * @returns {Object} Tactical adaptations
+     */
+    determineTacticalAdaptations(enemyComposition, analysis) {
+        const adaptations = {
+            unitProduction: {},
+            defensiveChanges: {},
+            offensiveChanges: {},
+            economicChanges: {},
+            priorities: []
+        };
+        
+        const { strategyType, ratios, threat, composition } = enemyComposition;
+        
+        // Adapt unit production based on enemy strategy
+        switch (strategyType) {
+            case 'economic_boom':
+                adaptations.unitProduction = {
+                    prioritize: ['scout', 'soldier'],
+                    reason: 'Harass enemy economy and prepare military response',
+                    workerRatio: 0.4,
+                    soldierRatio: 0.4,
+                    scoutRatio: 0.2
+                };
+                adaptations.priorities.push('aggressive_scouting', 'military_buildup');
+                break;
+                
+            case 'military_rush':
+                adaptations.unitProduction = {
+                    prioritize: ['soldier'],
+                    reason: 'Counter enemy military buildup',
+                    workerRatio: 0.3,
+                    soldierRatio: 0.6,
+                    scoutRatio: 0.1
+                };
+                adaptations.defensiveChanges = {
+                    increaseBaseDefense: true,
+                    keepSoldiersClose: true,
+                    maxPatrolDistance: 15
+                };
+                adaptations.priorities.push('immediate_defense', 'military_focus');
+                break;
+                
+            case 'scout_harassment':
+                adaptations.unitProduction = {
+                    prioritize: ['soldier'],
+                    reason: 'Counter scout raids with defensive soldiers',
+                    workerRatio: 0.4,
+                    soldierRatio: 0.5,
+                    scoutRatio: 0.1
+                };
+                adaptations.defensiveChanges = {
+                    increaseBaseDefense: true,
+                    protectWorkers: true,
+                    maxWorkerDistance: 10
+                };
+                adaptations.priorities.push('worker_protection', 'base_defense');
+                break;
+                
+            case 'balanced_expansion':
+                adaptations.unitProduction = {
+                    prioritize: ['worker', 'soldier'],
+                    reason: 'Match enemy expansion pace',
+                    workerRatio: 0.5,
+                    soldierRatio: 0.3,
+                    scoutRatio: 0.2
+                };
+                adaptations.priorities.push('competitive_expansion', 'maintain_military');
+                break;
+                
+            default:
+                adaptations.unitProduction = {
+                    prioritize: ['worker'],
+                    reason: 'Standard economic development',
+                    workerRatio: 0.5,
+                    soldierRatio: 0.3,
+                    scoutRatio: 0.2
+                };
+                adaptations.priorities.push('economic_focus');
+        }
+        
+        // Adjust based on threat level
+        if (threat === 'high' || threat === 'critical') {
+            adaptations.unitProduction.soldierRatio = Math.max(0.5, adaptations.unitProduction.soldierRatio);
+            adaptations.economicChanges.restrictResourceCollection = true;
+            adaptations.economicChanges.maxCollectionDistance = 12;
+        }
+        
+        // Special adaptations for scout-heavy enemies
+        if (ratios.scouts > 0.3) {
+            adaptations.defensiveChanges.antiScoutMeasures = true;
+            adaptations.defensiveChanges.keepWorkersClose = true;
+        }
+        
+        logger.debug(`Tactical adaptations for ${strategyType}: ${adaptations.priorities.join(', ')}`);
+        
+        return adaptations;
     }
 }
 
